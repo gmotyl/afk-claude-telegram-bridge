@@ -187,6 +187,54 @@ describe('sendTelegramMessage', () => {
       expect(result.right).toEqual(expectedResponse)
     }
   })
+
+  it('validates that botToken is provided', async () => {
+    const result = await sendTelegramMessage('', 'chatId', 'text')()
+
+    expect(E.isLeft(result)).toBe(true)
+    if (E.isLeft(result)) {
+      expect(result.left.message).toContain('Missing required parameters')
+      expect(result.left.message).toContain('botToken')
+    }
+  })
+
+  it('validates that chatId is provided', async () => {
+    const result = await sendTelegramMessage('token', '', 'text')()
+
+    expect(E.isLeft(result)).toBe(true)
+    if (E.isLeft(result)) {
+      expect(result.left.message).toContain('Missing required parameters')
+      expect(result.left.message).toContain('chatId')
+    }
+  })
+
+  it('validates that text is provided', async () => {
+    const result = await sendTelegramMessage('token', 'chatId', '')()
+
+    expect(E.isLeft(result)).toBe(true)
+    if (E.isLeft(result)) {
+      expect(result.left.message).toContain('Missing required parameters')
+      expect(result.left.message).toContain('text')
+    }
+  })
+
+  it('validates multiple missing parameters', async () => {
+    const result = await sendTelegramMessage('', '', '')()
+
+    expect(E.isLeft(result)).toBe(true)
+    if (E.isLeft(result)) {
+      expect(result.left.message).toContain('Missing required parameters')
+      expect(result.left.message).toContain('botToken')
+      expect(result.left.message).toContain('chatId')
+      expect(result.left.message).toContain('text')
+    }
+  })
+
+  it('does not call fetch when validation fails', async () => {
+    await sendTelegramMessage('', 'chatId', 'text')()
+
+    expect(mockFetch).not.toHaveBeenCalled()
+  })
 })
 
 describe('sendTelegramReplyWithButtons', () => {
@@ -354,14 +402,14 @@ describe('sendTelegramReplyWithButtons', () => {
       json: async () => ({
         ok: false,
         error_code: 400,
-        description: 'Bad Request: message text is empty'
+        description: 'Bad Request: invalid chat ID'
       })
     })
 
     const result = await sendTelegramReplyWithButtons(
       'token',
       'chatId',
-      '',
+      'valid text',
       [{ text: 'btn', callback_data: 'data' }]
     )()
 
@@ -428,5 +476,78 @@ describe('sendTelegramReplyWithButtons', () => {
     expect(body.reply_markup.inline_keyboard[0][0].text).toBe('A')
     expect(body.reply_markup.inline_keyboard[0][1].text).toBe('B')
     expect(body.reply_markup.inline_keyboard[0][2].text).toBe('C')
+  })
+
+  it('validates that botToken is provided', async () => {
+    const result = await sendTelegramReplyWithButtons(
+      '',
+      'chatId',
+      'text',
+      [{ text: 'btn', callback_data: 'data' }]
+    )()
+
+    expect(E.isLeft(result)).toBe(true)
+    if (E.isLeft(result)) {
+      expect(result.left.message).toContain('Missing required parameters')
+      expect(result.left.message).toContain('botToken')
+    }
+  })
+
+  it('validates that chatId is provided', async () => {
+    const result = await sendTelegramReplyWithButtons(
+      'token',
+      '',
+      'text',
+      [{ text: 'btn', callback_data: 'data' }]
+    )()
+
+    expect(E.isLeft(result)).toBe(true)
+    if (E.isLeft(result)) {
+      expect(result.left.message).toContain('Missing required parameters')
+      expect(result.left.message).toContain('chatId')
+    }
+  })
+
+  it('validates that text is provided', async () => {
+    const result = await sendTelegramReplyWithButtons(
+      'token',
+      'chatId',
+      '',
+      [{ text: 'btn', callback_data: 'data' }]
+    )()
+
+    expect(E.isLeft(result)).toBe(true)
+    if (E.isLeft(result)) {
+      expect(result.left.message).toContain('Missing required parameters')
+      expect(result.left.message).toContain('text')
+    }
+  })
+
+  it('validates multiple missing parameters', async () => {
+    const result = await sendTelegramReplyWithButtons(
+      '',
+      '',
+      '',
+      [{ text: 'btn', callback_data: 'data' }]
+    )()
+
+    expect(E.isLeft(result)).toBe(true)
+    if (E.isLeft(result)) {
+      expect(result.left.message).toContain('Missing required parameters')
+      expect(result.left.message).toContain('botToken')
+      expect(result.left.message).toContain('chatId')
+      expect(result.left.message).toContain('text')
+    }
+  })
+
+  it('does not call fetch when validation fails', async () => {
+    await sendTelegramReplyWithButtons(
+      '',
+      'chatId',
+      'text',
+      [{ text: 'btn', callback_data: 'data' }]
+    )()
+
+    expect(mockFetch).not.toHaveBeenCalled()
   })
 })

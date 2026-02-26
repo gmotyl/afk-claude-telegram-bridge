@@ -6,6 +6,22 @@
 
 import * as TE from 'fp-ts/TaskEither'
 
+// Module constants
+const TELEGRAM_API_BASE_URL = 'https://api.telegram.org'
+const CONTENT_TYPE_JSON = 'application/json'
+
+/**
+ * Convert an unknown error to a standardized Error instance
+ * @param error - Any thrown error (can be Error, string, or unknown type)
+ * @returns Standardized Error instance
+ */
+const convertError = (error: unknown): Error => {
+  if (error instanceof Error) {
+    return error
+  }
+  return new Error(String(error))
+}
+
 /**
  * Telegram inline button configuration
  */
@@ -31,7 +47,7 @@ interface TelegramApiResponse {
  * @returns Full URL to the API endpoint
  */
 const buildTelegramUrl = (botToken: string, method: string): string => {
-  return `https://api.telegram.org/bot${botToken}/${method}`
+  return `${TELEGRAM_API_BASE_URL}/bot${botToken}/${method}`
 }
 
 /**
@@ -65,6 +81,7 @@ const getResponseError = (
  * @param chatId - The target chat ID (can be string or number)
  * @param text - The message text to send
  * @returns TaskEither<Error, TelegramApiResponse> - Left(error) or Right(response)
+ * @throws Error if required parameters (botToken, chatId, text) are missing or empty
  *
  * @example
  * const result = await sendTelegramMessage('token', '-123456', 'Hello!')()
@@ -76,8 +93,20 @@ export const sendTelegramMessage = (
   botToken: string,
   chatId: string,
   text: string
-): TE.TaskEither<Error, TelegramApiResponse> =>
-  TE.tryCatch(
+): TE.TaskEither<Error, TelegramApiResponse> => {
+  // Validate required parameters
+  if (!botToken || !chatId || !text) {
+    const missing = [
+      !botToken && 'botToken',
+      !chatId && 'chatId',
+      !text && 'text'
+    ]
+      .filter(Boolean)
+      .join(', ')
+    return TE.left(new Error(`Missing required parameters: ${missing}`))
+  }
+
+  return TE.tryCatch(
     async () => {
       const url = buildTelegramUrl(botToken, 'sendMessage')
       const body = JSON.stringify({
@@ -88,7 +117,7 @@ export const sendTelegramMessage = (
       const response = await fetch(url, {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/json'
+          'Content-Type': CONTENT_TYPE_JSON
         },
         body: body
       })
@@ -104,14 +133,9 @@ export const sendTelegramMessage = (
 
       return data
     },
-    (error) => {
-      // Convert any error to Error type
-      if (error instanceof Error) {
-        return error
-      }
-      return new Error(String(error))
-    }
+    convertError
   )
+}
 
 /**
  * Send a message with inline reply buttons via Telegram Bot API
@@ -122,6 +146,7 @@ export const sendTelegramMessage = (
  * @param text - The message text to send
  * @param buttons - Array of buttons to display inline
  * @returns TaskEither<Error, TelegramApiResponse> - Left(error) or Right(response)
+ * @throws Error if required parameters (botToken, chatId, text) are missing or empty
  *
  * @example
  * const buttons = [
@@ -135,8 +160,20 @@ export const sendTelegramReplyWithButtons = (
   chatId: string,
   text: string,
   buttons: readonly TelegramButton[]
-): TE.TaskEither<Error, TelegramApiResponse> =>
-  TE.tryCatch(
+): TE.TaskEither<Error, TelegramApiResponse> => {
+  // Validate required parameters
+  if (!botToken || !chatId || !text) {
+    const missing = [
+      !botToken && 'botToken',
+      !chatId && 'chatId',
+      !text && 'text'
+    ]
+      .filter(Boolean)
+      .join(', ')
+    return TE.left(new Error(`Missing required parameters: ${missing}`))
+  }
+
+  return TE.tryCatch(
     async () => {
       const url = buildTelegramUrl(botToken, 'sendMessage')
 
@@ -151,7 +188,7 @@ export const sendTelegramReplyWithButtons = (
       const response = await fetch(url, {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/json'
+          'Content-Type': CONTENT_TYPE_JSON
         },
         body: body
       })
@@ -167,11 +204,6 @@ export const sendTelegramReplyWithButtons = (
 
       return data
     },
-    (error) => {
-      // Convert any error to Error type
-      if (error instanceof Error) {
-        return error
-      }
-      return new Error(String(error))
-    }
+    convertError
   )
+}
