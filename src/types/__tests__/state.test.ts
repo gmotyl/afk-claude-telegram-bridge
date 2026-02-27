@@ -4,25 +4,62 @@ describe('State and Slot', () => {
   it('Slot has required fields', () => {
     const now = new Date()
     const slot: Slot = {
+      sessionId: 'session-1',
       projectName: 'metro',
+      topicName: 'metro',
       activatedAt: now,
       lastHeartbeat: now
     }
 
+    expect(slot.sessionId).toBe('session-1')
     expect(slot.projectName).toBe('metro')
+    expect(slot.topicName).toBe('metro')
     expect(slot.activatedAt).toBe(now)
     expect(slot.lastHeartbeat).toBe(now)
   })
 
+  it('Slot supports optional threadId', () => {
+    const now = new Date()
+    const slot: Slot = {
+      sessionId: 'session-1',
+      projectName: 'metro',
+      topicName: 'metro',
+      threadId: 42,
+      activatedAt: now,
+      lastHeartbeat: now
+    }
+
+    expect(slot.threadId).toBe(42)
+  })
+
+  it('Slot threadId is undefined when not set', () => {
+    const now = new Date()
+    const slot: Slot = {
+      sessionId: 'session-1',
+      projectName: 'metro',
+      topicName: 'metro',
+      activatedAt: now,
+      lastHeartbeat: now
+    }
+
+    expect(slot.threadId).toBeUndefined()
+  })
+
   it('Slot is readonly', () => {
     const slot: Slot = {
+      sessionId: 'session-1',
       projectName: 'metro',
+      topicName: 'metro',
       activatedAt: new Date(),
       lastHeartbeat: new Date()
     }
 
     // @ts-expect-error - readonly
     slot.projectName = 'modified'
+    // @ts-expect-error - readonly
+    slot.sessionId = 'modified'
+    // @ts-expect-error - readonly
+    slot.topicName = 'modified'
     expect(true).toBe(true)
   })
 
@@ -49,7 +86,7 @@ describe('State and Slot', () => {
     }
 
     // @ts-expect-error - readonly
-    state.slots[1] = { projectName: 'test', activatedAt: new Date(), lastHeartbeat: new Date() }
+    state.slots[1] = { sessionId: 's1', projectName: 'test', topicName: 'test', activatedAt: new Date(), lastHeartbeat: new Date() }
     expect(true).toBe(true)
   })
 

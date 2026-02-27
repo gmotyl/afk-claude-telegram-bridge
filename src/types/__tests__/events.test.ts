@@ -2,11 +2,13 @@ import * as events from '../events'
 
 describe('IpcEvent', () => {
   it('SessionStart event has correct shape', () => {
-    const event = events.sessionStart(1, 'metro')
+    const event = events.sessionStart(1, 'sess-1', 'metro', 'metro')
     expect(event._tag).toBe('SessionStart')
     if (event._tag === 'SessionStart') {
       expect(event.slotNum).toBe(1)
+      expect(event.sessionId).toBe('sess-1')
       expect(event.projectName).toBe('metro')
+      expect(event.topicName).toBe('metro')
     }
   })
 
@@ -69,7 +71,7 @@ describe('IpcEvent', () => {
   })
 
   it('SessionStart can be stringified to JSON', () => {
-    const event = events.sessionStart(1, 'metro')
+    const event = events.sessionStart(1, 'sess-1', 'metro', 'metro')
     const json = JSON.stringify(event)
     const parsed = JSON.parse(json)
     expect(parsed._tag).toBe('SessionStart')

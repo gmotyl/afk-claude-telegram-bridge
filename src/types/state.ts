@@ -1,5 +1,8 @@
 export interface Slot {
+  readonly sessionId: string
   readonly projectName: string
+  readonly topicName: string
+  readonly threadId?: number
   readonly activatedAt: Date
   readonly lastHeartbeat: Date
 }

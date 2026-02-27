@@ -113,7 +113,31 @@ export type HookError = {
   readonly message: string
 }
 
-export type BusinessError = StateError | ValidationError | SlotError | HookParseError | HookError
+export type CliError = {
+  readonly _tag: 'CliError'
+  readonly message: string
+  readonly command: string
+}
+
+export type LockError = {
+  readonly _tag: 'LockError'
+  readonly path: string
+  readonly operation: string
+  readonly cause: unknown
+}
+
+export type DaemonSpawnError = {
+  readonly _tag: 'DaemonSpawnError'
+  readonly message: string
+  readonly exitCode?: number
+}
+
+export type DaemonStopError = {
+  readonly _tag: 'DaemonStopError'
+  readonly message: string
+}
+
+export type BusinessError = StateError | ValidationError | SlotError | HookParseError | HookError | CliError | LockError | DaemonSpawnError | DaemonStopError
 
 export const stateError = (message: string, details?: unknown): StateError => ({
   _tag: 'StateError',
@@ -140,6 +164,30 @@ export const hookParseError = (message: string): HookParseError => ({
 
 export const hookError = (message: string): HookError => ({
   _tag: 'HookError',
+  message,
+})
+
+export const cliError = (message: string, command: string): CliError => ({
+  _tag: 'CliError',
+  message,
+  command,
+})
+
+export const lockError = (path: string, operation: string, cause: unknown): LockError => ({
+  _tag: 'LockError',
+  path,
+  operation,
+  cause,
+})
+
+export const daemonSpawnError = (message: string, exitCode?: number): DaemonSpawnError => ({
+  _tag: 'DaemonSpawnError',
+  message,
+  ...(exitCode !== undefined ? { exitCode } : {}),
+})
+
+export const daemonStopError = (message: string): DaemonStopError => ({
+  _tag: 'DaemonStopError',
   message,
 })
 
@@ -175,6 +223,14 @@ export const errorMessage = (error: BridgeError): string => {
       return `Hook parse error: ${error.message}`
     case 'HookError':
       return `Hook error: ${error.message}`
+    case 'CliError':
+      return `CLI error (${error.command}): ${error.message}`
+    case 'LockError':
+      return `Lock ${error.operation} failed on ${error.path}: ${String(error.cause)}`
+    case 'DaemonSpawnError':
+      return `Daemon spawn error: ${error.message}`
+    case 'DaemonStopError':
+      return `Daemon stop error: ${error.message}`
   }
 }
 
@@ -197,6 +253,14 @@ export const errorStatusCode = (error: BridgeError): number => {
     case 'HookParseError':
       return 400
     case 'HookError':
+      return 500
+    case 'CliError':
+      return 400
+    case 'LockError':
+      return 500
+    case 'DaemonSpawnError':
+      return 500
+    case 'DaemonStopError':
       return 500
   }
 }

@@ -75,7 +75,7 @@ describe('IPC Event Queue Module', () => {
     it('reads JSONL file with multiple events', async () => {
       const eventsFile = path.join(tempDir, 'events.jsonl')
       const events = [
-        sessionStart(1, 'metro'),
+        sessionStart(1, 'test-session', 'metro', 'metro'),
         heartbeat(1),
         message('Hello', 1),
         sessionEnd(1)
@@ -216,7 +216,7 @@ describe('IPC Event Queue Module', () => {
 
     it('appends event to file with existing events', async () => {
       const eventsFile = path.join(tempDir, 'events.jsonl')
-      const event1 = sessionStart(1, 'metro')
+      const event1 = sessionStart(1, 'test-session', 'metro', 'metro')
       const event2 = heartbeat(1)
 
       await fs.writeFile(eventsFile, JSON.stringify(event1) + '\n', 'utf-8')

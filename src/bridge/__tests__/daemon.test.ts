@@ -119,7 +119,9 @@ describe('startDaemon', () => {
     const existingState: State = {
       slots: {
         1: {
+          sessionId: 'test-session-1',
           projectName: 'metro',
+          topicName: 'metro',
           activatedAt: new Date(),
           lastHeartbeat: new Date()
         },
@@ -146,7 +148,7 @@ describe('startDaemon', () => {
     const configPath = await createTestConfigFile(tempDir)
 
     // Create an event file with SessionStart
-    const event = sessionStart(1, 'metro')
+    const event = sessionStart(1, 'sess-1', 'metro', 'metro')
     await writeEventFile(tempDir, 'event-S1.jsonl', [event])
 
     const result = await startDaemon(configPath)()
@@ -189,7 +191,9 @@ describe('startDaemon', () => {
     const initialStateWithSlot: State = {
       slots: {
         1: {
+          sessionId: 'test-session-1',
           projectName: 'metro',
+          topicName: 'metro',
           activatedAt: new Date(),
           lastHeartbeat: new Date()
         },
@@ -236,7 +240,9 @@ describe('startDaemon', () => {
     const initialStateWithSlot: State = {
       slots: {
         1: {
+          sessionId: 'test-session-1',
           projectName: 'metro',
+          topicName: 'metro',
           activatedAt: now,
           lastHeartbeat: new Date(now.getTime() - 10000) // 10 seconds ago
         },
@@ -287,8 +293,8 @@ describe('startDaemon', () => {
 
     // Create event file with multiple events
     const events = [
-      sessionStart(1, 'metro'),
-      sessionStart(2, 'alokai'),
+      sessionStart(1, 'sess-1', 'metro', 'metro'),
+      sessionStart(2, 'sess-2', 'alokai', 'alokai'),
       heartbeat(1),
       message('Hello', 1)
     ]
@@ -324,7 +330,7 @@ describe('startDaemon', () => {
     const configPath = await createTestConfigFile(tempDir)
 
     // Create an event file
-    const event = sessionStart(1, 'metro')
+    const event = sessionStart(1, 'sess-1', 'metro', 'metro')
     await writeEventFile(tempDir, 'event-S1.jsonl', [event])
 
     const result = await startDaemon(configPath)()
@@ -377,7 +383,7 @@ describe('startDaemon', () => {
       await new Promise((resolve) => setTimeout(resolve, 1500))
 
       // Event file should NOT be deleted since daemon is stopped
-      const event = sessionStart(1, 'metro')
+      const event = sessionStart(1, 'sess-1', 'metro', 'metro')
       await writeEventFile(tempDir, 'event-post-stop.jsonl', [event])
 
       // File should still exist (wasn't processed)
@@ -398,7 +404,9 @@ describe('startDaemon', () => {
     const initialState: State = {
       slots: {
         1: {
+          sessionId: 'test-session-1',
           projectName: 'metro',
+          topicName: 'metro',
           activatedAt: new Date(),
           lastHeartbeat: new Date()
         },
@@ -413,8 +421,8 @@ describe('startDaemon', () => {
     // Create event file with a bad event (try to add to already-occupied slot)
     // followed by a good event
     const events = [
-      sessionStart(1, 'alokai'), // Will fail - slot 1 is already occupied
-      sessionStart(2, 'ch') // Should succeed even though previous failed
+      sessionStart(1, 'sess-alokai', 'alokai', 'alokai'), // Will fail - slot 1 is already occupied
+      sessionStart(2, 'sess-ch', 'ch', 'ch') // Should succeed even though previous failed
     ]
     await writeEventFile(tempDir, 'event-mixed.jsonl', events)
 
@@ -451,7 +459,9 @@ describe('startDaemon', () => {
     const stateWithSlot: State = {
       slots: {
         1: {
+          sessionId: 'test-session-1',
           projectName: 'metro',
+          topicName: 'metro',
           activatedAt: new Date(),
           lastHeartbeat: new Date()
         },

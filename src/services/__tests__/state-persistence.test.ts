@@ -38,7 +38,9 @@ describe('State Persistence Module', () => {
       const testState: State = {
         slots: {
           1: {
+            sessionId: 'test-session-1',
             projectName: 'metro',
+            topicName: 'metro',
             activatedAt: new Date('2026-02-26T10:00:00Z'),
             lastHeartbeat: new Date('2026-02-26T10:01:00Z')
           },
@@ -122,12 +124,16 @@ describe('State Persistence Module', () => {
       const testState: State = {
         slots: {
           1: {
+            sessionId: 'test-session-1',
             projectName: 'metro',
+            topicName: 'metro',
             activatedAt: activatedAt1,
             lastHeartbeat: lastHeartbeat1
           },
           2: {
+            sessionId: 'test-session-2',
             projectName: 'alokai',
+            topicName: 'alokai',
             activatedAt: activatedAt2,
             lastHeartbeat: lastHeartbeat2
           },
@@ -187,7 +193,9 @@ describe('State Persistence Module', () => {
       const testState: State = {
         slots: {
           1: {
+            sessionId: 'test-session-1',
             projectName: 'metro',
+            topicName: 'metro',
             activatedAt: new Date('2026-02-26T10:00:00Z'),
             lastHeartbeat: new Date('2026-02-26T10:01:00Z')
           },
@@ -211,7 +219,9 @@ describe('State Persistence Module', () => {
       const oldState: State = {
         slots: {
           1: {
+            sessionId: 'test-session-1',
             projectName: 'old',
+            topicName: 'old',
             activatedAt: new Date('2026-02-26T08:00:00Z'),
             lastHeartbeat: new Date('2026-02-26T08:00:00Z')
           },
@@ -226,7 +236,9 @@ describe('State Persistence Module', () => {
       const newState: State = {
         slots: {
           1: {
+            sessionId: 'test-session-2',
             projectName: 'new',
+            topicName: 'new',
             activatedAt: new Date('2026-02-26T10:00:00Z'),
             lastHeartbeat: new Date('2026-02-26T10:01:00Z')
           },
@@ -291,7 +303,9 @@ describe('State Persistence Module', () => {
       const testState: State = {
         slots: {
           1: {
+            sessionId: 'test-session-1',
             projectName: 'test',
+            topicName: 'test',
             activatedAt: now,
             lastHeartbeat: now
           },
@@ -330,7 +344,9 @@ describe('State Persistence Module', () => {
     it('round-trips state through save and load', async () => {
       const stateFile = path.join(tempDir, 'state.json')
       const slot1: Slot = {
+        sessionId: 'test-session-1',
         projectName: 'metro',
+        topicName: 'metro',
         activatedAt: new Date('2026-02-26T10:00:00Z'),
         lastHeartbeat: new Date('2026-02-26T10:01:00Z')
       }
@@ -364,7 +380,9 @@ describe('State Persistence Module', () => {
       const state1: State = {
         slots: {
           1: {
+            sessionId: 'test-session-1',
             projectName: 'metro',
+            topicName: 'metro',
             activatedAt: new Date('2026-02-26T10:00:00Z'),
             lastHeartbeat: new Date('2026-02-26T10:01:00Z')
           },
@@ -381,7 +399,9 @@ describe('State Persistence Module', () => {
         slots: {
           1: undefined,
           2: {
+            sessionId: 'test-session-2',
             projectName: 'alokai',
+            topicName: 'alokai',
             activatedAt: new Date('2026-02-26T09:00:00Z'),
             lastHeartbeat: new Date('2026-02-26T09:30:00Z')
           },

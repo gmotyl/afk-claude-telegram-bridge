@@ -142,3 +142,111 @@ describe('BridgeError Union', () => {
     }
   })
 })
+
+describe('CLI / Lock / Daemon Errors', () => {
+  it('creates CliError with correct _tag', () => {
+    const error = E.cliError('Invalid command', 'activate')
+    expect(error._tag).toBe('CliError')
+    expect(error.message).toBe('Invalid command')
+    expect(error.command).toBe('activate')
+  })
+
+  it('creates LockError with correct _tag', () => {
+    const error = E.lockError('/tmp/lock', 'acquire', new Error('EEXIST'))
+    expect(error._tag).toBe('LockError')
+    expect(error.path).toBe('/tmp/lock')
+    expect(error.operation).toBe('acquire')
+    expect(error.cause).toBeInstanceOf(Error)
+  })
+
+  it('creates DaemonSpawnError with correct _tag', () => {
+    const error = E.daemonSpawnError('Failed to start', 1)
+    expect(error._tag).toBe('DaemonSpawnError')
+    expect(error.message).toBe('Failed to start')
+    expect(error.exitCode).toBe(1)
+  })
+
+  it('creates DaemonSpawnError without exitCode', () => {
+    const error = E.daemonSpawnError('Spawn failed')
+    expect(error._tag).toBe('DaemonSpawnError')
+    expect(error.exitCode).toBeUndefined()
+  })
+
+  it('creates DaemonStopError with correct _tag', () => {
+    const error = E.daemonStopError('Timeout stopping daemon')
+    expect(error._tag).toBe('DaemonStopError')
+    expect(error.message).toBe('Timeout stopping daemon')
+  })
+})
+
+describe('Error Message Generation for new error types', () => {
+  it('generates message for CliError', () => {
+    const error = E.cliError('Unknown flag', 'activate')
+    const msg = E.errorMessage(error)
+    expect(msg).toContain('CLI error')
+    expect(msg).toContain('activate')
+    expect(msg).toContain('Unknown flag')
+  })
+
+  it('generates message for LockError', () => {
+    const error = E.lockError('/tmp/lock', 'acquire', new Error('EEXIST'))
+    const msg = E.errorMessage(error)
+    expect(msg).toContain('Lock')
+    expect(msg).toContain('/tmp/lock')
+    expect(msg).toContain('acquire')
+  })
+
+  it('generates message for DaemonSpawnError', () => {
+    const error = E.daemonSpawnError('Process crashed', 1)
+    const msg = E.errorMessage(error)
+    expect(msg).toContain('Daemon spawn')
+    expect(msg).toContain('Process crashed')
+  })
+
+  it('generates message for DaemonStopError', () => {
+    const error = E.daemonStopError('Timeout')
+    const msg = E.errorMessage(error)
+    expect(msg).toContain('Daemon stop')
+    expect(msg).toContain('Timeout')
+  })
+})
+
+describe('Error Status Codes for new error types', () => {
+  it('returns 400 for CliError', () => {
+    const error = E.cliError('Bad input', 'activate')
+    expect(E.errorStatusCode(error)).toBe(400)
+  })
+
+  it('returns 500 for LockError', () => {
+    const error = E.lockError('/tmp/lock', 'acquire', new Error('fail'))
+    expect(E.errorStatusCode(error)).toBe(500)
+  })
+
+  it('returns 500 for DaemonSpawnError', () => {
+    const error = E.daemonSpawnError('Spawn failed')
+    expect(E.errorStatusCode(error)).toBe(500)
+  })
+
+  it('returns 500 for DaemonStopError', () => {
+    const error = E.daemonStopError('Stop failed')
+    expect(E.errorStatusCode(error)).toBe(500)
+  })
+})
+
+describe('BridgeError Union includes new error types', () => {
+  it('accepts all new error types in BridgeError', () => {
+    const errors: E.BridgeError[] = [
+      E.cliError('test', 'cmd'),
+      E.lockError('/path', 'acquire', new Error()),
+      E.daemonSpawnError('test'),
+      E.daemonStopError('test'),
+    ]
+
+    expect(errors).toHaveLength(4)
+    errors.forEach(err => {
+      const msg = E.errorMessage(err)
+      expect(msg).toBeTruthy()
+      expect(E.errorStatusCode(err)).toBeGreaterThan(0)
+    })
+  })
+})

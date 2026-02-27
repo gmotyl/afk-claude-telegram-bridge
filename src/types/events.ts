@@ -1,5 +1,5 @@
 export type IpcEvent =
-  | { readonly _tag: 'SessionStart'; readonly slotNum: number; readonly projectName: string }
+  | { readonly _tag: 'SessionStart'; readonly slotNum: number; readonly sessionId: string; readonly projectName: string; readonly topicName: string; readonly threadId?: number }
   | { readonly _tag: 'SessionEnd'; readonly slotNum: number }
   | { readonly _tag: 'Heartbeat'; readonly slotNum: number }
   | { readonly _tag: 'Message'; readonly text: string; readonly slotNum: number }
@@ -8,8 +8,8 @@ export type IpcEvent =
   | { readonly _tag: 'KeepAlive'; readonly eventId: string; readonly originalEventId: string; readonly slotNum: number; readonly timestamp: string }
 
 // Smart constructors
-export const sessionStart = (slotNum: number, projectName: string): IpcEvent =>
-  ({ _tag: 'SessionStart', slotNum, projectName })
+export const sessionStart = (slotNum: number, sessionId: string, projectName: string, topicName: string, threadId?: number): IpcEvent =>
+  ({ _tag: 'SessionStart', slotNum, sessionId, projectName, topicName, ...(threadId !== undefined ? { threadId } : {}) })
 
 export const sessionEnd = (slotNum: number): IpcEvent =>
   ({ _tag: 'SessionEnd', slotNum })

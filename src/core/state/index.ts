@@ -148,3 +148,44 @@ export const updatePendingStopMessageId = (
     }
   }
 }
+
+/**
+ * Find the first available slot number (1-4)
+ * If preferredSlot is given and available, returns it; otherwise first available.
+ * Returns null if all slots are occupied.
+ */
+export const findAvailableSlot = (state: State, preferredSlot?: number): number | null => {
+  if (preferredSlot !== undefined && state.slots[preferredSlot] === undefined) {
+    return preferredSlot
+  }
+  for (let i = 1; i <= 4; i++) {
+    if (state.slots[i] === undefined) return i
+  }
+  return null
+}
+
+/**
+ * Find a slot by its sessionId
+ * Returns [slotNum, Slot] tuple or null
+ */
+export const findSlotBySessionId = (state: State, sessionId: string): [number, Slot] | null => {
+  for (const [key, slot] of Object.entries(state.slots)) {
+    if (slot && slot.sessionId === sessionId) {
+      return [parseInt(key, 10), slot]
+    }
+  }
+  return null
+}
+
+/**
+ * Find a slot by its topicName
+ * Returns [slotNum, Slot] tuple or null
+ */
+export const findSlotByTopicName = (state: State, topicName: string): [number, Slot] | null => {
+  for (const [key, slot] of Object.entries(state.slots)) {
+    if (slot && slot.topicName === topicName) {
+      return [parseInt(key, 10), slot]
+    }
+  }
+  return null
+}

@@ -1,4 +1,4 @@
-import { isSlotActive, addSlot, removeSlot, heartbeatSlot, cleanupStaleSlots, addPendingStop, removePendingStop, findPendingStopBySlot, updatePendingStopMessageId, StateError } from '../index'
+import { isSlotActive, addSlot, removeSlot, heartbeatSlot, cleanupStaleSlots, addPendingStop, removePendingStop, findPendingStopBySlot, updatePendingStopMessageId, findAvailableSlot, findSlotBySessionId, findSlotByTopicName, StateError } from '../index'
 import { State, Slot, PendingStop, initialState } from '../../../types/state'
 import * as E from 'fp-ts/Either'
 
@@ -7,7 +7,9 @@ const now = new Date('2024-01-01T12:00:00Z')
 describe('isSlotActive', () => {
   it('returns true if slot within timeout', () => {
     const slot: Slot = {
+      sessionId: 'test-session-1',
       projectName: 'metro',
+      topicName: 'metro',
       activatedAt: now,
       lastHeartbeat: now
     }
@@ -17,7 +19,9 @@ describe('isSlotActive', () => {
 
   it('returns false if slot timed out (just beyond timeout)', () => {
     const slot: Slot = {
+      sessionId: 'test-session-1',
       projectName: 'metro',
+      topicName: 'metro',
       activatedAt: now,
       lastHeartbeat: new Date('2024-01-01T11:54:00Z')
     }
@@ -27,7 +31,9 @@ describe('isSlotActive', () => {
 
   it('returns false if slot is at timeout boundary', () => {
     const slot: Slot = {
+      sessionId: 'test-session-1',
       projectName: 'metro',
+      topicName: 'metro',
       activatedAt: now,
       lastHeartbeat: new Date('2024-01-01T11:55:00Z')
     }
@@ -43,7 +49,9 @@ describe('isSlotActive', () => {
   it('returns false if slot has zero lastHeartbeat', () => {
     const epoch = new Date('1970-01-01T00:00:00Z')
     const slot: Slot = {
+      sessionId: 'test-session-1',
       projectName: 'metro',
+      topicName: 'metro',
       activatedAt: epoch,
       lastHeartbeat: epoch
     }
@@ -55,7 +63,9 @@ describe('isSlotActive', () => {
 describe('addSlot', () => {
   it('succeeds with valid slot number 1-4', () => {
     const slot: Slot = {
+      sessionId: 'test-session-1',
       projectName: 'metro',
+      topicName: 'metro',
       activatedAt: now,
       lastHeartbeat: now
     }
@@ -69,7 +79,9 @@ describe('addSlot', () => {
 
   it('fails if slot number out of range', () => {
     const slot: Slot = {
+      sessionId: 'test-session-1',
       projectName: 'metro',
+      topicName: 'metro',
       activatedAt: now,
       lastHeartbeat: now
     }
@@ -87,7 +99,9 @@ describe('addSlot', () => {
 
   it('fails if slot already active', () => {
     const slot: Slot = {
+      sessionId: 'test-session-1',
       projectName: 'metro',
+      topicName: 'metro',
       activatedAt: now,
       lastHeartbeat: now
     }
@@ -103,7 +117,9 @@ describe('addSlot', () => {
   it('does not mutate original state', () => {
     const original = initialState
     const slot: Slot = {
+      sessionId: 'test-session-1',
       projectName: 'metro',
+      topicName: 'metro',
       activatedAt: now,
       lastHeartbeat: now
     }
@@ -119,7 +135,9 @@ describe('addSlot', () => {
 describe('removeSlot', () => {
   it('removes slot from state', () => {
     const slot: Slot = {
+      sessionId: 'test-session-1',
       projectName: 'metro',
+      topicName: 'metro',
       activatedAt: now,
       lastHeartbeat: now
     }
@@ -139,12 +157,16 @@ describe('removeSlot', () => {
 
   it('does not affect other slots', () => {
     const slot1: Slot = {
+      sessionId: 'test-session-1',
       projectName: 'metro',
+      topicName: 'metro',
       activatedAt: now,
       lastHeartbeat: now
     }
     const slot2: Slot = {
+      sessionId: 'test-session-2',
       projectName: 'alokai',
+      topicName: 'alokai',
       activatedAt: now,
       lastHeartbeat: now
     }
@@ -160,7 +182,9 @@ describe('removeSlot', () => {
 
   it('does not mutate original state', () => {
     const slot: Slot = {
+      sessionId: 'test-session-1',
       projectName: 'metro',
+      topicName: 'metro',
       activatedAt: now,
       lastHeartbeat: now
     }
@@ -179,7 +203,9 @@ describe('heartbeatSlot', () => {
     const newTime = new Date('2024-01-01T12:01:00Z')
 
     const slot: Slot = {
+      sessionId: 'test-session-1',
       projectName: 'metro',
+      topicName: 'metro',
       activatedAt: oldTime,
       lastHeartbeat: oldTime
     }
@@ -210,7 +236,9 @@ describe('heartbeatSlot', () => {
 
   it('does not mutate original state', () => {
     const slot: Slot = {
+      sessionId: 'test-session-1',
       projectName: 'metro',
+      topicName: 'metro',
       activatedAt: now,
       lastHeartbeat: now
     }
@@ -234,12 +262,16 @@ describe('cleanupStaleSlots', () => {
     const staleTime = new Date('2024-01-01T11:54:00Z')
 
     const activeSlot: Slot = {
+      sessionId: 'test-session-1',
       projectName: 'metro',
+      topicName: 'metro',
       activatedAt: activeTime,
       lastHeartbeat: activeTime
     }
     const staleSlot: Slot = {
+      sessionId: 'test-session-2',
       projectName: 'alokai',
+      topicName: 'alokai',
       activatedAt: staleTime,
       lastHeartbeat: staleTime
     }
@@ -257,7 +289,9 @@ describe('cleanupStaleSlots', () => {
 
   it('is idempotent (cleanup twice yields same state)', () => {
     const slot: Slot = {
+      sessionId: 'test-session-1',
       projectName: 'metro',
+      topicName: 'metro',
       activatedAt: now,
       lastHeartbeat: now
     }
@@ -273,7 +307,9 @@ describe('cleanupStaleSlots', () => {
 
   it('does not mutate original state', () => {
     const slot: Slot = {
+      sessionId: 'test-session-1',
       projectName: 'metro',
+      topicName: 'metro',
       activatedAt: now,
       lastHeartbeat: new Date('2024-01-01T11:54:00Z')
     }
@@ -289,12 +325,16 @@ describe('cleanupStaleSlots', () => {
 
   it('preserves multiple active slots', () => {
     const slot1: Slot = {
+      sessionId: 'test-session-1',
       projectName: 'metro',
+      topicName: 'metro',
       activatedAt: now,
       lastHeartbeat: now
     }
     const slot2: Slot = {
+      sessionId: 'test-session-2',
       projectName: 'alokai',
+      topicName: 'alokai',
       activatedAt: now,
       lastHeartbeat: now
     }
@@ -376,5 +416,163 @@ describe('updatePendingStopMessageId', () => {
   it('returns state unchanged if eventId not found', () => {
     const result = updatePendingStopMessageId(initialState, 'nonexistent', 42)
     expect(result).toEqual(initialState)
+  })
+})
+
+describe('findAvailableSlot', () => {
+  it('returns preferred slot when it is available', () => {
+    const result = findAvailableSlot(initialState, 3)
+    expect(result).toBe(3)
+  })
+
+  it('returns first available slot (1) when no preference given', () => {
+    const result = findAvailableSlot(initialState)
+    expect(result).toBe(1)
+  })
+
+  it('skips occupied slots and returns next available', () => {
+    const slot: Slot = {
+      sessionId: 'test-session-1',
+      projectName: 'metro',
+      topicName: 'metro',
+      activatedAt: now,
+      lastHeartbeat: now
+    }
+    let state = initialState
+    state = E.getOrElse(() => state)(addSlot(state, 1, slot))
+
+    const result = findAvailableSlot(state)
+    expect(result).toBe(2)
+  })
+
+  it('returns null when all slots are occupied', () => {
+    const makeSlot = (id: string): Slot => ({
+      sessionId: id,
+      projectName: `proj-${id}`,
+      topicName: `topic-${id}`,
+      activatedAt: now,
+      lastHeartbeat: now
+    })
+
+    let state = initialState
+    for (let i = 1; i <= 4; i++) {
+      state = E.getOrElse(() => state)(addSlot(state, i, makeSlot(`s${i}`)))
+    }
+
+    const result = findAvailableSlot(state)
+    expect(result).toBeNull()
+  })
+
+  it('falls back to first available when preferred slot is occupied', () => {
+    const slot: Slot = {
+      sessionId: 'test-session-1',
+      projectName: 'metro',
+      topicName: 'metro',
+      activatedAt: now,
+      lastHeartbeat: now
+    }
+    let state = initialState
+    state = E.getOrElse(() => state)(addSlot(state, 2, slot))
+
+    const result = findAvailableSlot(state, 2)
+    expect(result).toBe(1)
+  })
+})
+
+describe('findSlotBySessionId', () => {
+  it('finds slot by session ID', () => {
+    const slot: Slot = {
+      sessionId: 'abc-123',
+      projectName: 'metro',
+      topicName: 'metro',
+      activatedAt: now,
+      lastHeartbeat: now
+    }
+    let state = initialState
+    state = E.getOrElse(() => state)(addSlot(state, 2, slot))
+
+    const result = findSlotBySessionId(state, 'abc-123')
+    expect(result).not.toBeNull()
+    expect(result![0]).toBe(2)
+    expect(result![1]).toEqual(slot)
+  })
+
+  it('returns null when session ID not found', () => {
+    const result = findSlotBySessionId(initialState, 'nonexistent')
+    expect(result).toBeNull()
+  })
+
+  it('finds correct slot when multiple slots are active', () => {
+    const slot1: Slot = {
+      sessionId: 'session-A',
+      projectName: 'metro',
+      topicName: 'metro',
+      activatedAt: now,
+      lastHeartbeat: now
+    }
+    const slot2: Slot = {
+      sessionId: 'session-B',
+      projectName: 'alokai',
+      topicName: 'alokai',
+      activatedAt: now,
+      lastHeartbeat: now
+    }
+    let state = initialState
+    state = E.getOrElse(() => state)(addSlot(state, 1, slot1))
+    state = E.getOrElse(() => state)(addSlot(state, 3, slot2))
+
+    const result = findSlotBySessionId(state, 'session-B')
+    expect(result).not.toBeNull()
+    expect(result![0]).toBe(3)
+    expect(result![1].projectName).toBe('alokai')
+  })
+})
+
+describe('findSlotByTopicName', () => {
+  it('finds slot by topic name', () => {
+    const slot: Slot = {
+      sessionId: 'session-1',
+      projectName: 'metro',
+      topicName: 'metro-topic',
+      activatedAt: now,
+      lastHeartbeat: now
+    }
+    let state = initialState
+    state = E.getOrElse(() => state)(addSlot(state, 1, slot))
+
+    const result = findSlotByTopicName(state, 'metro-topic')
+    expect(result).not.toBeNull()
+    expect(result![0]).toBe(1)
+    expect(result![1]).toEqual(slot)
+  })
+
+  it('returns null when topic name not found', () => {
+    const result = findSlotByTopicName(initialState, 'nonexistent')
+    expect(result).toBeNull()
+  })
+
+  it('finds correct slot when multiple slots have different topics', () => {
+    const slot1: Slot = {
+      sessionId: 'session-1',
+      projectName: 'metro',
+      topicName: 'topic-A',
+      activatedAt: now,
+      lastHeartbeat: now
+    }
+    const slot2: Slot = {
+      sessionId: 'session-2',
+      projectName: 'alokai',
+      topicName: 'topic-B',
+      activatedAt: now,
+      lastHeartbeat: now
+    }
+    let state = initialState
+    state = E.getOrElse(() => state)(addSlot(state, 2, slot1))
+    state = E.getOrElse(() => state)(addSlot(state, 4, slot2))
+
+    const result = findSlotByTopicName(state, 'topic-B')
+    expect(result).not.toBeNull()
+    expect(result![0]).toBe(4)
+    expect(result![1].projectName).toBe('alokai')
   })
 })

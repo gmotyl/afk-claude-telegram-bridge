@@ -50,7 +50,10 @@ const processEvent = (
     case 'SessionStart': {
       // Create new slot
       const newSlot: Slot = {
+        sessionId: event.sessionId,
         projectName: event.projectName,
+        topicName: event.topicName,
+        ...(event.threadId !== undefined ? { threadId: event.threadId } : {}),
         activatedAt: now,
         lastHeartbeat: now
       }
