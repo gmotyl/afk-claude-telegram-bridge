@@ -15,7 +15,11 @@ import {
   deleteEventFile,
   listEvents,
   writeResponse,
-  readResponse
+  readResponse,
+  createIpcDir,
+  removeIpcDir,
+  writeMetaFile,
+  cleanOrphanedIpcDirs
 } from '../ipc'
 import {
   sessionStart,
@@ -552,6 +556,80 @@ describe('IPC Event Queue Module', () => {
         expect(result.right).toHaveLength(1)
         expect(result.right[0]!._tag).toBe('KeepAlive')
       }
+    })
+  })
+
+  describe('createIpcDir', () => {
+    it('creates session directory', async () => {
+      const result = await createIpcDir(tempDir, 'session-abc')()
+      expect(E.isRight(result)).toBe(true)
+      if (E.isRight(result)) {
+        expect(result.right).toBe(`${tempDir}/session-abc`)
+        const stat = await fs.stat(result.right)
+        expect(stat.isDirectory()).toBe(true)
+      }
+    })
+
+    it('is idempotent (creating twice succeeds)', async () => {
+      await createIpcDir(tempDir, 'session-abc')()
+      const result = await createIpcDir(tempDir, 'session-abc')()
+      expect(E.isRight(result)).toBe(true)
+    })
+  })
+
+  describe('removeIpcDir', () => {
+    it('removes session directory', async () => {
+      await createIpcDir(tempDir, 'session-rm')()
+      const result = await removeIpcDir(tempDir, 'session-rm')()
+      expect(E.isRight(result)).toBe(true)
+      const exists = await fs.access(`${tempDir}/session-rm`).then(() => true).catch(() => false)
+      expect(exists).toBe(false)
+    })
+
+    it('succeeds even if directory does not exist', async () => {
+      const result = await removeIpcDir(tempDir, 'nonexistent')()
+      expect(E.isRight(result)).toBe(true)
+    })
+  })
+
+  describe('writeMetaFile', () => {
+    it('writes meta.json to IPC directory', async () => {
+      const ipcDir = `${tempDir}/session-meta`
+      await fs.mkdir(ipcDir, { recursive: true })
+      const meta = { sessionId: 'abc', project: 'metro' }
+
+      const result = await writeMetaFile(ipcDir, meta)()
+      expect(E.isRight(result)).toBe(true)
+
+      const content = JSON.parse(await fs.readFile(`${ipcDir}/meta.json`, 'utf-8'))
+      expect(content.sessionId).toBe('abc')
+      expect(content.project).toBe('metro')
+    })
+  })
+
+  describe('cleanOrphanedIpcDirs', () => {
+    it('removes directories not in active set', async () => {
+      await fs.mkdir(`${tempDir}/active-session`, { recursive: true })
+      await fs.mkdir(`${tempDir}/orphan-session`, { recursive: true })
+
+      const result = await cleanOrphanedIpcDirs(tempDir, new Set(['active-session']))()
+      expect(E.isRight(result)).toBe(true)
+
+      const activeExists = await fs.access(`${tempDir}/active-session`).then(() => true).catch(() => false)
+      const orphanExists = await fs.access(`${tempDir}/orphan-session`).then(() => true).catch(() => false)
+      expect(activeExists).toBe(true)
+      expect(orphanExists).toBe(false)
+    })
+
+    it('preserves files (only removes directories)', async () => {
+      await fs.writeFile(`${tempDir}/some-file.json`, '{}', 'utf-8')
+      await fs.mkdir(`${tempDir}/orphan`, { recursive: true })
+
+      const result = await cleanOrphanedIpcDirs(tempDir, new Set())()
+      expect(E.isRight(result)).toBe(true)
+
+      const fileExists = await fs.access(`${tempDir}/some-file.json`).then(() => true).catch(() => false)
+      expect(fileExists).toBe(true)
     })
   })
 })

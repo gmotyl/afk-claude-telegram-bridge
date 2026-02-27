@@ -221,6 +221,90 @@ export const readResponse = (
   )
 }
 
+/**
+ * Create an IPC directory for a session.
+ *
+ * @param baseDir - Base IPC directory
+ * @param sessionId - Session UUID for directory naming
+ * @returns TaskEither<IpcError, string> - Path to the created directory
+ */
+export const createIpcDir = (
+  baseDir: string,
+  sessionId: string
+): TE.TaskEither<IpcError, string> => {
+  const dirPath = `${baseDir}/${sessionId}`
+  return TE.tryCatch(
+    async () => {
+      await fs.mkdir(dirPath, { recursive: true })
+      return dirPath
+    },
+    writeErrorHandler(dirPath)
+  )
+}
+
+/**
+ * Remove an IPC directory for a session.
+ *
+ * @param baseDir - Base IPC directory
+ * @param sessionId - Session UUID for directory naming
+ * @returns TaskEither<IpcError, void>
+ */
+export const removeIpcDir = (
+  baseDir: string,
+  sessionId: string
+): TE.TaskEither<IpcError, void> => {
+  const dirPath = `${baseDir}/${sessionId}`
+  return TE.tryCatch(
+    async () => {
+      await fs.rm(dirPath, { recursive: true, force: true })
+    },
+    writeErrorHandler(dirPath)
+  )
+}
+
+/**
+ * Write a meta.json file inside an IPC directory.
+ *
+ * @param ipcDir - Path to the session's IPC directory
+ * @param meta - Metadata object to write
+ * @returns TaskEither<IpcError, void>
+ */
+export const writeMetaFile = (
+  ipcDir: string,
+  meta: Record<string, unknown>
+): TE.TaskEither<IpcError, void> => {
+  const metaPath = `${ipcDir}/meta.json`
+  return TE.tryCatch(
+    async () => {
+      await fs.writeFile(metaPath, JSON.stringify(meta, null, 2), 'utf-8')
+    },
+    writeErrorHandler(metaPath)
+  )
+}
+
+/**
+ * Remove IPC directories that don't belong to any active session.
+ *
+ * @param baseDir - Base IPC directory
+ * @param activeSessionIds - Set of session IDs that are still active
+ * @returns TaskEither<IpcError, void>
+ */
+export const cleanOrphanedIpcDirs = (
+  baseDir: string,
+  activeSessionIds: ReadonlySet<string>
+): TE.TaskEither<IpcError, void> =>
+  TE.tryCatch(
+    async () => {
+      const entries = await fs.readdir(baseDir, { withFileTypes: true })
+      for (const entry of entries) {
+        if (entry.isDirectory() && !activeSessionIds.has(entry.name)) {
+          await fs.rm(`${baseDir}/${entry.name}`, { recursive: true, force: true })
+        }
+      }
+    },
+    writeErrorHandler(baseDir)
+  )
+
 export const listEvents = (eventsDir: string): TE.TaskEither<IpcError, string[]> => {
   return TE.tryCatch(
     async () => {
