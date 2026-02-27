@@ -5,7 +5,7 @@ import * as path from 'path'
 import { startDaemon } from '../daemon'
 import { Config } from '../../types/config'
 import { State, initialState } from '../../types/state'
-import { sessionStart, heartbeat, sessionEnd, message } from '../../types/events'
+import { sessionStart, heartbeat, sessionEnd, message, stopEvent, keepAlive } from '../../types/events'
 
 const tempDir = path.join('/tmp', 'daemon-test-' + Date.now())
 
@@ -126,7 +126,8 @@ describe('startDaemon', () => {
         2: undefined,
         3: undefined,
         4: undefined
-      }
+      },
+      pendingStops: {}
     }
     await fs.writeFile(stateFilePath, JSON.stringify(existingState, null, 2))
 
@@ -195,7 +196,8 @@ describe('startDaemon', () => {
         2: undefined,
         3: undefined,
         4: undefined
-      }
+      },
+      pendingStops: {}
     }
     await fs.writeFile(stateFilePath, JSON.stringify(initialStateWithSlot, null, 2))
 
@@ -241,7 +243,8 @@ describe('startDaemon', () => {
         2: undefined,
         3: undefined,
         4: undefined
-      }
+      },
+      pendingStops: {}
     }
     await fs.writeFile(stateFilePath, JSON.stringify(initialStateWithSlot, null, 2))
 
@@ -402,7 +405,8 @@ describe('startDaemon', () => {
         2: undefined,
         3: undefined,
         4: undefined
-      }
+      },
+      pendingStops: {}
     }
     await fs.writeFile(stateFilePath, JSON.stringify(initialState, null, 2))
 
@@ -434,6 +438,103 @@ describe('startDaemon', () => {
       expect(state.slots[2]?.projectName).toBe('ch') // New slot created
 
       // Stop the daemon
+      const stopResult = await stopFunction()()
+      expect(E.isRight(stopResult)).toBe(true)
+    }
+  })
+
+  it('processes Stop events and tracks pending stops in state', async () => {
+    const configPath = await createTestConfigFile(tempDir)
+
+    // Create initial state with active slot
+    const stateFilePath = path.join(tempDir, 'state.json')
+    const stateWithSlot: State = {
+      slots: {
+        1: {
+          projectName: 'metro',
+          activatedAt: new Date(),
+          lastHeartbeat: new Date()
+        },
+        2: undefined,
+        3: undefined,
+        4: undefined
+      },
+      pendingStops: {}
+    }
+    await fs.writeFile(stateFilePath, JSON.stringify(stateWithSlot, null, 2))
+
+    // Create a queued instruction so the stop event is auto-resolved
+    await fs.writeFile(
+      path.join(tempDir, 'queued_instruction.json'),
+      JSON.stringify({ text: 'run tests', timestamp: new Date().toISOString() })
+    )
+
+    // Create stop event
+    const event = stopEvent('evt-test-1', 1, 'last message')
+    await writeEventFile(tempDir, 'event-stop.jsonl', [event])
+
+    const result = await startDaemon(configPath)()
+
+    expect(E.isRight(result)).toBe(true)
+
+    if (E.isRight(result)) {
+      const stopFunction = result.right
+
+      // Wait for event processing
+      await new Promise((resolve) => setTimeout(resolve, 1500))
+
+      // The stop event should have been auto-resolved with queued instruction
+      // Check that response file was created
+      const responseFile = path.join(tempDir, 'response-evt-test-1.json')
+      const responseExists = await fs
+        .access(responseFile)
+        .then(() => true)
+        .catch(() => false)
+
+      expect(responseExists).toBe(true)
+
+      if (responseExists) {
+        const responseContent = await fs.readFile(responseFile, 'utf-8')
+        const response = JSON.parse(responseContent)
+        expect(response.instruction).toBe('run tests')
+      }
+
+      // Queued instruction should be deleted
+      const queuedExists = await fs
+        .access(path.join(tempDir, 'queued_instruction.json'))
+        .then(() => true)
+        .catch(() => false)
+      expect(queuedExists).toBe(false)
+
+      const stopResult = await stopFunction()()
+      expect(E.isRight(stopResult)).toBe(true)
+    }
+  })
+
+  it('processes KeepAlive events without state change', async () => {
+    const configPath = await createTestConfigFile(tempDir)
+
+    // Create KeepAlive event
+    const event = keepAlive('ka-1', 'evt-1', 1)
+    await writeEventFile(tempDir, 'event-ka.jsonl', [event])
+
+    const result = await startDaemon(configPath)()
+
+    expect(E.isRight(result)).toBe(true)
+
+    if (E.isRight(result)) {
+      const stopFunction = result.right
+
+      // Wait for event processing
+      await new Promise((resolve) => setTimeout(resolve, 1500))
+
+      // Event file should be deleted (processed)
+      const eventFileExists = await fs
+        .access(path.join(tempDir, 'event-ka.jsonl'))
+        .then(() => true)
+        .catch(() => false)
+      expect(eventFileExists).toBe(false)
+
       const stopResult = await stopFunction()()
       expect(E.isRight(stopResult)).toBe(true)
     }

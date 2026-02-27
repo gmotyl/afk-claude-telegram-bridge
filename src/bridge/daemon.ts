@@ -3,8 +3,9 @@
 import * as TE from 'fp-ts/TaskEither'
 import * as E from 'fp-ts/Either'
 import * as path from 'path'
+import { pipe } from 'fp-ts/function'
 import { Config } from '../types/config'
-import { State, Slot, initialState } from '../types/state'
+import { State, Slot, PendingStop, initialState } from '../types/state'
 import { IpcEvent } from '../types/events'
 import { BridgeError, stateError } from '../types/errors'
 import { loadConfig } from '../core/config'
@@ -14,10 +15,14 @@ import {
   removeSlot,
   heartbeatSlot,
   cleanupStaleSlots,
+  addPendingStop,
+  removePendingStop,
+  findPendingStopBySlot,
   StateError
 } from '../core/state'
 import { loadState, saveState } from '../services/state-persistence'
-import { readEventQueue, listEvents, deleteEventFile } from '../services/ipc'
+import { readEventQueue, listEvents, deleteEventFile, writeResponse } from '../services/ipc'
+import { readQueuedInstruction, deleteQueuedInstruction } from '../services/queued-instruction'
 import { sendTelegramMessage } from '../services/telegram'
 
 /**
@@ -72,6 +77,22 @@ const processEvent = (
       // Permission requests are handled by the hook/daemon approval flow
       // The daemon responds via response files, not by modifying state
       // Just return state unchanged
+      return E.right(state)
+    }
+
+    case 'Stop': {
+      // Track this stop as a pending stop for response delivery
+      const pendingStop: PendingStop = {
+        eventId: event.eventId,
+        slotNum: event.slotNum,
+        lastMessage: event.lastMessage,
+        timestamp: event.timestamp
+      }
+      return E.right(addPendingStop(state, pendingStop))
+    }
+
+    case 'KeepAlive': {
+      // KeepAlive just confirms the hook is still waiting — no state change needed
       return E.right(state)
     }
   }
@@ -134,6 +155,9 @@ const processAllEvents = (
         }
       }
 
+      // Handle side effects for any new pending stops
+      currentState = await handleStopEventSideEffects(config, currentState)
+
       return currentState
     },
     (error) => {
@@ -144,6 +168,82 @@ const processAllEvents = (
       return stateError(`Unexpected error processing events: ${String(error)}`, error)
     }
   )
+}
+
+/**
+ * Handle side effects after processing Stop events:
+ * - Check for queued instruction → auto-inject via response file
+ * - Otherwise, send Telegram notification that we're waiting
+ */
+const handleStopEventSideEffects = async (
+  config: Config,
+  state: State
+): Promise<State> => {
+  let currentState = state
+
+  // Find any newly added pending stops that need side-effect processing
+  for (const ps of Object.values(currentState.pendingStops)) {
+    // Check for queued instruction
+    const queuedResult = await readQueuedInstruction(config.ipcBaseDir)()
+
+    if (E.isRight(queuedResult) && queuedResult.right !== null) {
+      const queued = queuedResult.right
+      // Auto-inject: write response file with queued instruction
+      const writeResult = await writeResponse(config.ipcBaseDir, ps.eventId, {
+        instruction: queued.text
+      })()
+
+      if (E.isRight(writeResult)) {
+        // Delete the queued instruction and remove from pending
+        await deleteQueuedInstruction(config.ipcBaseDir)()
+        currentState = removePendingStop(currentState, ps.eventId)
+      }
+    } else {
+      // No queued instruction — send Telegram notification
+      const result = await sendTelegramMessage(
+        config.telegramBotToken,
+        String(config.telegramGroupId),
+        `⏳ S${ps.slotNum} waiting for instructions...`
+      )()
+
+      if (E.isLeft(result)) {
+        console.error('Failed to send Telegram notification:', result.left)
+      }
+    }
+  }
+
+  return currentState
+}
+
+/**
+ * Process an incoming Telegram message for a specific slot.
+ * If there's a pending stop for that slot, write a response file immediately.
+ * Otherwise, buffer it as a queued instruction.
+ */
+const processIncomingMessage = async (
+  config: Config,
+  state: State,
+  slotNum: number,
+  text: string
+): Promise<State> => {
+  const pendingStop = findPendingStopBySlot(state, slotNum)
+
+  if (pendingStop) {
+    // Deliver immediately via response file
+    const writeResult = await writeResponse(config.ipcBaseDir, pendingStop.eventId, {
+      instruction: text
+    })()
+
+    if (E.isRight(writeResult)) {
+      return removePendingStop(state, pendingStop.eventId)
+    }
+    return state
+  }
+
+  // No pending stop — buffer as queued instruction
+  const { writeQueuedInstruction } = await import('../services/queued-instruction')
+  await writeQueuedInstruction(config.ipcBaseDir, text)()
+  return state
 }
 
 /**
