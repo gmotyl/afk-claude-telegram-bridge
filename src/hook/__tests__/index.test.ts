@@ -135,7 +135,9 @@ describe('Hook Main Entry Point', () => {
     })
 
     describe('stop hook', () => {
-      it('processes stop hook and returns 0', async () => {
+      it('processes stop hook and returns 0 when kill file exists', async () => {
+        // Pre-create kill file so the stop handler exits immediately
+        await fs.writeFile(path.join(ipcDir, 'kill'), '', 'utf-8')
         const args = ['stop']
 
         const result = await runHook(configPath, args)()
@@ -146,10 +148,32 @@ describe('Hook Main Entry Point', () => {
         }
       })
 
-      it('ignores extra arguments after stop', async () => {
-        const args = ['stop', 'extra', 'args']
+      it('processes stop hook and returns 0 when response file appears', async () => {
+        const args = ['stop']
+
+        // Simulate daemon response
+        const responsePromise = (async () => {
+          await new Promise(resolve => setTimeout(resolve, 100))
+
+          const eventsFile = path.join(ipcDir, 'events.jsonl')
+          try {
+            const content = await fs.readFile(eventsFile, 'utf-8')
+            const lines = content.split('\n').filter(l => l.trim())
+            const lastLine = lines[lines.length - 1]
+            if (lastLine) {
+              const event = JSON.parse(lastLine) as { eventId?: string; _tag?: string }
+              if (event._tag === 'Stop' && event.eventId) {
+                const responseFile = path.join(ipcDir, `response-${event.eventId}.json`)
+                await fs.writeFile(responseFile, JSON.stringify({ instruction: 'test' }), 'utf-8')
+              }
+            }
+          } catch {
+            // Ignore errors
+          }
+        })()
 
         const result = await runHook(configPath, args)()
+        await responsePromise
 
         expect(E.isRight(result)).toBe(true)
         if (E.isRight(result)) {
@@ -270,6 +294,8 @@ describe('Hook Main Entry Point', () => {
 
     describe('exit codes', () => {
       it('returns 0 for successful stop', async () => {
+        // Pre-create kill file so stop handler exits immediately
+        await fs.writeFile(path.join(ipcDir, 'kill'), '', 'utf-8')
         const result = await runHook(configPath, ['stop'])()
 
         expect(E.isRight(result)).toBe(true)
@@ -366,6 +392,7 @@ describe('Hook Main Entry Point', () => {
 
     describe('TaskEither pattern', () => {
       it('returns TaskEither type', async () => {
+        await fs.writeFile(path.join(ipcDir, 'kill'), '', 'utf-8')
         const task = runHook(configPath, ['stop'])
 
         // Verify it's a function (TaskEither is T => Promise<Either>)
@@ -378,6 +405,7 @@ describe('Hook Main Entry Point', () => {
       })
 
       it('supports lazy evaluation', async () => {
+        await fs.writeFile(path.join(ipcDir, 'kill'), '', 'utf-8')
         const task = runHook(configPath, ['stop'])
 
         // Can call it multiple times independently

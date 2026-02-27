@@ -21,6 +21,7 @@ import * as E from 'fp-ts/Either'
 import { pipe } from 'fp-ts/function'
 import { parseHookArgs, type HookArgs } from './args'
 import { requestPermission, type PermissionResponse } from './permission'
+import { handleStopRequest, type StopDecision } from './stop'
 import { loadConfig } from '../core/config'
 import { type HookError, hookError } from '../types/errors'
 
@@ -86,7 +87,7 @@ export const runHook = (
           return await handlePermissionRequest(hookArgs, config.ipcBaseDir, timeoutMs)
 
         case 'stop':
-          return handleStop()
+          return await handleStop(config.ipcBaseDir)
 
         case 'notification':
           return handleNotification(hookArgs)
@@ -137,13 +138,29 @@ const handlePermissionRequest = async (
 }
 
 /**
- * Handle stop hook
- * - Clean daemon shutdown acknowledgement
- * - Always returns 0 (success)
+ * Handle stop hook — active listening loop
+ * - Writes Stop event to IPC, polls for next instruction
+ * - Returns 0 when instruction received (block decision)
+ * - Returns 0 when kill/force_clear signal (pass decision)
  *
- * @returns ExitCode (always 0)
+ * Output: JSON decision to stdout for Claude Code to read
+ *
+ * @param ipcDir - IPC directory for communication with daemon
+ * @returns Promise<ExitCode>
  */
-const handleStop = (): ExitCode => {
+const handleStop = async (ipcDir: string): Promise<ExitCode> => {
+  const slotNum = parseInt(process.env.AFK_SLOT_NUM ?? '1', 10)
+  const lastMessage = process.env.CLAUDE_LAST_MESSAGE ?? ''
+
+  const result = await handleStopRequest(ipcDir, slotNum, lastMessage)()
+
+  if (E.isLeft(result)) {
+    throw result.left
+  }
+
+  const decision = result.right
+  // Output the decision as JSON to stdout for Claude Code
+  process.stdout.write(JSON.stringify(decision))
   return 0
 }
 
