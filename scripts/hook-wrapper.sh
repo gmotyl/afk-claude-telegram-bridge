@@ -57,12 +57,8 @@ case "${1:-}" in
     ;;
   --setup)
     # Interactive bot token + chat_id configuration
-    if [ -f "$CONFIG_DIR/hook.py" ]; then
-      exec python3 "$CONFIG_DIR/hook.py" setup
-    else
-      echo "Setup mode not yet implemented" >&2
-      exit 1
-    fi
+    echo "Run 'bash install.sh' to reconfigure Telegram bot setup." >&2
+    exit 1
     ;;
   --help|-h)
     cat <<'EOF'
