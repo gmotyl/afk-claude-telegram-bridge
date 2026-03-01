@@ -54,6 +54,34 @@ const createTestEnv = async () => {
   return { tempDir, ipcDir, sessionIpcDir, sessionId, configPath, statePath }
 }
 
+/** Read the last event's requestId from per-event files in a session IPC directory */
+const getRequestIdFromEventFiles = async (dir: string): Promise<string | null> => {
+  try {
+    const files = await fs.readdir(dir)
+    const eventFiles = files.filter(f => f.startsWith('event-') && f.endsWith('.jsonl')).sort()
+    if (eventFiles.length === 0) return null
+    const lastFile = eventFiles[eventFiles.length - 1]!
+    const content = await fs.readFile(path.join(dir, lastFile), 'utf-8')
+    const lines = content.split('\n').filter(l => l.trim())
+    const lastLine = lines[lines.length - 1]
+    if (!lastLine) return null
+    const event = JSON.parse(lastLine) as { requestId?: string }
+    return event.requestId ?? null
+  } catch {
+    return null
+  }
+}
+
+/** Check if any per-event files exist in a directory */
+const hasEventFiles = async (dir: string): Promise<boolean> => {
+  try {
+    const files = await fs.readdir(dir)
+    return files.some(f => f.startsWith('event-') && f.endsWith('.jsonl'))
+  } catch {
+    return false
+  }
+}
+
 describe('Hook Main Entry Point', () => {
   let tempDir: string
   let ipcDir: string
@@ -93,17 +121,11 @@ describe('Hook Main Entry Point', () => {
         const responsePromise = (async () => {
           await new Promise(resolve => setTimeout(resolve, 100))
 
-          const eventsFile = path.join(sessionIpcDir, 'events.jsonl')
           try {
-            const content = await fs.readFile(eventsFile, 'utf-8')
-            const lines = content.split('\n').filter(l => l.trim())
-            if (lines.length > 0) {
-              const lastLine = lines[lines.length - 1]
-              const event = JSON.parse(lastLine!) as { requestId?: string }
-              if (event.requestId) {
-                const responseFile = path.join(sessionIpcDir, `response-${event.requestId}.json`)
+            const requestId = await getRequestIdFromEventFiles(sessionIpcDir)
+            if (requestId) {
+                const responseFile = path.join(sessionIpcDir, `response-${requestId}.json`)
                 await fs.writeFile(responseFile, JSON.stringify({ approved: true }), 'utf-8')
-              }
             }
           } catch { /* ignore */ }
         })()
@@ -129,17 +151,11 @@ describe('Hook Main Entry Point', () => {
         const responsePromise = (async () => {
           await new Promise(resolve => setTimeout(resolve, 100))
 
-          const eventsFile = path.join(sessionIpcDir, 'events.jsonl')
           try {
-            const content = await fs.readFile(eventsFile, 'utf-8')
-            const lines = content.split('\n').filter(l => l.trim())
-            if (lines.length > 0) {
-              const lastLine = lines[lines.length - 1]
-              const event = JSON.parse(lastLine!) as { requestId?: string }
-              if (event.requestId) {
-                const responseFile = path.join(sessionIpcDir, `response-${event.requestId}.json`)
+            const requestId = await getRequestIdFromEventFiles(sessionIpcDir)
+            if (requestId) {
+                const responseFile = path.join(sessionIpcDir, `response-${requestId}.json`)
                 await fs.writeFile(responseFile, JSON.stringify({ approved: false, reason: 'Dangerous' }), 'utf-8')
-              }
             }
           } catch { /* ignore */ }
         })()
@@ -200,16 +216,18 @@ describe('Hook Main Entry Point', () => {
         const responsePromise = (async () => {
           await new Promise(resolve => setTimeout(resolve, 100))
 
-          const eventsFile = path.join(sessionIpcDir, 'events.jsonl')
           try {
-            const content = await fs.readFile(eventsFile, 'utf-8')
-            const lines = content.split('\n').filter(l => l.trim())
-            const lastLine = lines[lines.length - 1]
-            if (lastLine) {
-              const event = JSON.parse(lastLine) as { eventId?: string; _tag?: string }
-              if (event._tag === 'Stop' && event.eventId) {
-                const responseFile = path.join(sessionIpcDir, `response-${event.eventId}.json`)
-                await fs.writeFile(responseFile, JSON.stringify({ instruction: 'test' }), 'utf-8')
+            const files = await fs.readdir(sessionIpcDir)
+            const eventFiles = files.filter(f => f.startsWith('event-') && f.endsWith('.jsonl')).sort()
+            for (const file of eventFiles) {
+              const content = await fs.readFile(path.join(sessionIpcDir, file), 'utf-8')
+              const lines = content.split('\n').filter(l => l.trim())
+              for (const line of lines) {
+                const event = JSON.parse(line) as { eventId?: string; _tag?: string }
+                if (event._tag === 'Stop' && event.eventId) {
+                  const responseFile = path.join(sessionIpcDir, `response-${event.eventId}.json`)
+                  await fs.writeFile(responseFile, JSON.stringify({ instruction: 'test' }), 'utf-8')
+                }
               }
             }
           } catch { /* ignore */ }
@@ -415,20 +433,14 @@ describe('Hook Main Entry Point', () => {
         // Simulate daemon response in session B's IPC dir
         const responsePromise = (async () => {
           await new Promise(resolve => setTimeout(resolve, 100))
-
-          const eventsFile = path.join(sessionIpcDirB, 'events.jsonl')
           try {
-            const content = await fs.readFile(eventsFile, 'utf-8')
-            const lines = content.split('\n').filter(l => l.trim())
-            if (lines.length > 0) {
-              const event = JSON.parse(lines[lines.length - 1]!) as { requestId?: string }
-              if (event.requestId) {
-                await fs.writeFile(
-                  path.join(sessionIpcDirB, `response-${event.requestId}.json`),
-                  JSON.stringify({ approved: true }),
-                  'utf-8'
-                )
-              }
+            const requestId = await getRequestIdFromEventFiles(sessionIpcDirB)
+            if (requestId) {
+              await fs.writeFile(
+                path.join(sessionIpcDirB, `response-${requestId}.json`),
+                JSON.stringify({ approved: true }),
+                'utf-8'
+              )
             }
           } catch { /* ignore */ }
         })()
@@ -441,12 +453,11 @@ describe('Hook Main Entry Point', () => {
           expect(result.right).toBe(0) // approved
         }
 
-        // Verify: events.jsonl was written to session B's dir, NOT session A's
-        const eventsA = path.join(sessionIpcDir, 'events.jsonl')
-        const eventsB = path.join(sessionIpcDirB, 'events.jsonl')
-        await expect(fs.readFile(eventsA, 'utf-8')).rejects.toThrow() // No events in A
-        const contentB = await fs.readFile(eventsB, 'utf-8')
-        expect(contentB.trim().length).toBeGreaterThan(0) // Events in B
+        // Verify: event files were written to session B's dir, NOT session A's
+        const hasEventsA = await hasEventFiles(sessionIpcDir)
+        const hasEventsB = await hasEventFiles(sessionIpcDirB)
+        expect(hasEventsA).toBe(false) // No events in A
+        expect(hasEventsB).toBe(true)  // Events in B
       })
 
       it('falls back to single active slot when no session_id', async () => {
@@ -529,9 +540,7 @@ describe('Hook Main Entry Point', () => {
         }
 
         // Verify no events were written to IPC (no Telegram roundtrip)
-        const eventsFile = path.join(sessionIpcDir, 'events.jsonl')
-        const exists = await fs.access(eventsFile).then(() => true).catch(() => false)
-        expect(exists).toBe(false)
+        expect(await hasEventFiles(sessionIpcDir)).toBe(false)
       })
 
       it('auto-approves Glob tool without Telegram roundtrip', async () => {
@@ -600,19 +609,14 @@ describe('Hook Main Entry Point', () => {
         // Simulate daemon response so it doesn't hang
         const responsePromise = (async () => {
           await new Promise(resolve => setTimeout(resolve, 100))
-          const eventsFile = path.join(sessionIpcDir, 'events.jsonl')
           try {
-            const content = await fs.readFile(eventsFile, 'utf-8')
-            const lines = content.split('\n').filter(l => l.trim())
-            if (lines.length > 0) {
-              const event = JSON.parse(lines[lines.length - 1]!) as { requestId?: string }
-              if (event.requestId) {
-                await fs.writeFile(
-                  path.join(sessionIpcDir, `response-${event.requestId}.json`),
-                  JSON.stringify({ approved: true }),
-                  'utf-8'
-                )
-              }
+            const requestId = await getRequestIdFromEventFiles(sessionIpcDir)
+            if (requestId) {
+              await fs.writeFile(
+                path.join(sessionIpcDir, `response-${requestId}.json`),
+                JSON.stringify({ approved: true }),
+                'utf-8'
+              )
             }
           } catch { /* ignore */ }
         })()
@@ -623,9 +627,7 @@ describe('Hook Main Entry Point', () => {
         expect(E.isRight(result)).toBe(true)
 
         // Verify events WERE written to IPC (Telegram roundtrip happened)
-        const eventsFile = path.join(sessionIpcDir, 'events.jsonl')
-        const content = await fs.readFile(eventsFile, 'utf-8')
-        expect(content.trim().length).toBeGreaterThan(0)
+        expect(await hasEventFiles(sessionIpcDir)).toBe(true)
       })
 
       it('still requires Telegram approval for Write', async () => {
@@ -695,9 +697,7 @@ describe('Hook Main Entry Point', () => {
         }
 
         // Verify no events were written (auto-approved, no Telegram roundtrip)
-        const eventsFile = path.join(sessionIpcDir, 'events.jsonl')
-        const exists = await fs.access(eventsFile).then(() => true).catch(() => false)
-        expect(exists).toBe(false)
+        expect(await hasEventFiles(sessionIpcDir)).toBe(false)
       })
 
       it('auto-approves Write when whitelisted in autoApproveTools', async () => {
@@ -950,20 +950,14 @@ describe('Hook Main Entry Point', () => {
 
         const responsePromise = (async () => {
           await new Promise(resolve => setTimeout(resolve, 100))
-
-          const eventsFile = path.join(sessionIpcDir, 'events.jsonl')
           try {
-            const content = await fs.readFile(eventsFile, 'utf-8')
-            const lines = content.split('\n').filter(l => l.trim())
-            if (lines.length > 0) {
-              const event = JSON.parse(lines[lines.length - 1]!) as { requestId?: string }
-              if (event.requestId) {
-                await fs.writeFile(
-                  path.join(sessionIpcDir, `response-${event.requestId}.json`),
-                  JSON.stringify({ approved: true }),
-                  'utf-8'
-                )
-              }
+            const requestId = await getRequestIdFromEventFiles(sessionIpcDir)
+            if (requestId) {
+              await fs.writeFile(
+                path.join(sessionIpcDir, `response-${requestId}.json`),
+                JSON.stringify({ approved: true }),
+                'utf-8'
+              )
             }
           } catch { /* ignore */ }
         })()

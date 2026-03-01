@@ -11,16 +11,16 @@ import * as os from 'os'
 import { requestPermission, type PermissionResponse } from '../permission'
 import { type HookArgs } from '../args'
 
-// Helper to get request ID from events file
+// Helper to get request ID from per-event files
 const getLastRequestId = async (sessionDir: string): Promise<string | null> => {
   try {
     const files = await fs.readdir(sessionDir)
-    const eventFiles = files.filter(f => f.startsWith('events'))
+    const eventFiles = files.filter(f => f.startsWith('event-') && f.endsWith('.jsonl')).sort()
     if (eventFiles.length === 0) return null
 
-    const firstFile = eventFiles[0]
-    if (!firstFile) return null
-    const eventFile = path.join(sessionDir, firstFile)
+    const lastFile = eventFiles[eventFiles.length - 1]
+    if (!lastFile) return null
+    const eventFile = path.join(sessionDir, lastFile)
     const content = await fs.readFile(eventFile, 'utf-8')
     const lines = content.split('\n').filter(l => l.trim())
     if (lines.length === 0) return null
@@ -147,7 +147,7 @@ describe('Permission Request Handler', () => {
     })
 
     describe('IPC event writing', () => {
-      it('writes permission request to per-session events.jsonl', async () => {
+      it('writes permission request to per-event file in session directory', async () => {
         const hookArgs: HookArgs = {
           type: 'permission_request',
           tool: 'Bash',
@@ -166,15 +166,13 @@ describe('Permission Request Handler', () => {
         await requestPermission(ipcBaseDir, sessionId, slotNum, hookArgs, 5000)()
         await responsePromise
 
-        // Events written to per-session directory
-        const eventsFile = path.join(sessionDir, 'events.jsonl')
-        const exists = await fs
-          .access(eventsFile)
-          .then(() => true)
-          .catch(() => false)
-        expect(exists).toBe(true)
+        // Events written as individual files in per-session directory
+        const files = await fs.readdir(sessionDir)
+        const eventFiles = files.filter(f => f.startsWith('event-') && f.endsWith('.jsonl'))
+        expect(eventFiles.length).toBeGreaterThan(0)
 
-        const content = await fs.readFile(eventsFile, 'utf-8')
+        const firstEventFile = eventFiles[0]!
+        const content = await fs.readFile(path.join(sessionDir, firstEventFile), 'utf-8')
         const lines = content.split('\n').filter(l => l.trim())
         expect(lines.length).toBeGreaterThan(0)
 

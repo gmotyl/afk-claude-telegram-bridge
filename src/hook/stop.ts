@@ -22,7 +22,7 @@ import * as fs from 'fs/promises'
 import * as path from 'path'
 import { randomUUID } from 'crypto'
 import { stopEvent, keepAlive } from '../types/events'
-import { writeEvent } from '../services/ipc'
+import { writeEventAtomic } from '../services/ipc'
 import { readResponse, type StopResponse } from '../services/ipc'
 import { checkDaemonHealth, ensureDaemonAlive } from '../services/daemon-health'
 import { type HookError, hookError } from '../types/errors'
@@ -86,22 +86,21 @@ export const handleStopRequest = (
 
       // Resolve per-session IPC directory
       const sessionIpcDir = path.join(ipcBaseDir, sessionId)
-      const eventsFile = path.join(sessionIpcDir, 'events.jsonl')
 
       // Ensure IPC directory exists (may be missing after /afk-reset)
       await fs.mkdir(sessionIpcDir, { recursive: true })
 
       // Write Stop event to IPC (include sessionId for daemon cross-validation)
       const event = stopEvent(eventId, slotNum, lastMessage, sessionId)
-      console.error(`[stop-hook] Writing Stop event ${eventId.slice(0,8)} to ${eventsFile}`)
-      const writeResult = await writeEvent(eventsFile, event)()
+      console.error(`[stop-hook] Writing Stop event ${eventId.slice(0,8)} to ${sessionIpcDir}`)
+      const writeResult = await writeEventAtomic(sessionIpcDir, event)()
       if (E.isLeft(writeResult)) {
         throw hookError(`Failed to write stop event: ${String(writeResult.left)}`)
       }
 
       // Enter polling loop
       console.error(`[stop-hook] Entering polling loop for response-${eventId.slice(0,8)}.json in ${sessionIpcDir}`)
-      return await pollForInstruction(sessionIpcDir, eventId, slotNum, eventsFile, configDir, sessionId)
+      return await pollForInstruction(sessionIpcDir, eventId, slotNum, configDir, sessionId)
     },
     (error: unknown): HookError => {
       if (typeof error === 'object' && error !== null && '_tag' in error) {
@@ -126,7 +125,7 @@ export const handleStopRequest = (
  */
 const attemptDaemonRecovery = async (
   configDir: string,
-  eventsFile: string,
+  ipcDir: string,
   eventId: string,
   slotNum: number,
   lastMessage: string,
@@ -143,7 +142,7 @@ const attemptDaemonRecovery = async (
 
   // Re-send the Stop event so the new daemon picks it up
   const event = stopEvent(eventId, slotNum, lastMessage)
-  const writeResult = await writeEvent(eventsFile, event)()
+  const writeResult = await writeEventAtomic(ipcDir, event)()
 
   if (E.isLeft(writeResult)) {
     console.error(`[stop-hook] Failed to re-write stop event after recovery: ${String(writeResult.left)}`)
@@ -162,7 +161,6 @@ const pollForInstruction = async (
   ipcDir: string,
   eventId: string,
   slotNum: number,
-  eventsFile: string,
   configDir?: string,
   sessionId?: string
 ): Promise<StopDecision> => {
@@ -227,7 +225,7 @@ const pollForInstruction = async (
           recoveryAttempts++
           // Extract lastMessage from the Stop event file for re-sending
           const recovered = await attemptDaemonRecovery(
-            configDir, eventsFile, eventId, slotNum, '', recoveryAttempts
+            configDir, ipcDir, eventId, slotNum, '', recoveryAttempts
           )
 
           if (recovered) {
@@ -245,7 +243,7 @@ const pollForInstruction = async (
     if (now - lastKeepAlive >= KEEP_ALIVE_INTERVAL_MS) {
       const kaEventId = randomUUID()
       const kaEvent = keepAlive(kaEventId, eventId, slotNum, sessionId)
-      await writeEvent(eventsFile, kaEvent)()
+      await writeEventAtomic(ipcDir, kaEvent)()
       lastKeepAlive = now
     }
 
