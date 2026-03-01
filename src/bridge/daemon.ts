@@ -215,10 +215,15 @@ const processEventSideEffects = async (
       // Trusted session → auto-approve immediately
       if (slot.sessionId && runtime.trustedSessions.has(slot.sessionId)) {
         const sessionIpcDir = path.join(config.ipcBaseDir, slot.sessionId)
-        await writeResponse(sessionIpcDir, event.requestId, { approved: true })()
-        startTyping(runtime, event.slotNum)
-        console.log(`[trust] Auto-approved ${event.tool} for trusted session ${slot.sessionId.slice(0,8)}`)
-        return state
+        const writeResult = await writeResponse(sessionIpcDir, event.requestId, { approved: true })()
+        if (E.isLeft(writeResult)) {
+          console.error(`[trust] Failed to write auto-approve response for ${event.tool}: ${String(writeResult.left)}`)
+          // Fall through to normal batch flow so the request doesn't hang
+        } else {
+          startTyping(runtime, event.slotNum)
+          console.log(`[trust] Auto-approved ${event.tool} for trusted session ${slot.sessionId.slice(0,8)}`)
+          return state
+        }
       }
 
       // Buffer into batch (flushed on next daemon tick after window expires)

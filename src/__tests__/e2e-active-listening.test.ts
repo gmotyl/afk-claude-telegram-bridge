@@ -141,25 +141,28 @@ describe('Active Listening E2E', () => {
       const responsePromise = (async () => {
         await new Promise(resolve => setTimeout(resolve, 200))
 
-        // Read the events.jsonl to find the eventId (in per-session dir)
-        const eventsFile = path.join(sessionDir, 'events.jsonl')
+        // Read per-event files to find the eventId (in per-session dir)
         try {
-          const content = await fs.readFile(eventsFile, 'utf-8')
-          const lines = content.split('\n').filter(l => l.trim())
-          for (const line of lines) {
-            const event = JSON.parse(line) as { _tag?: string; eventId?: string }
-            if (event._tag === 'Stop' && event.eventId) {
-              const responseFile = path.join(sessionDir, `response-${event.eventId}.json`)
-              await fs.writeFile(
-                responseFile,
-                JSON.stringify({ instruction: 'run npm test' }),
-                'utf-8'
-              )
-              return
+          const files = await fs.readdir(sessionDir)
+          const eventFiles = files.filter(f => f.startsWith('event-') && f.endsWith('.jsonl')).sort()
+          for (const file of eventFiles) {
+            const content = await fs.readFile(path.join(sessionDir, file), 'utf-8')
+            const lines = content.split('\n').filter(l => l.trim())
+            for (const line of lines) {
+              const event = JSON.parse(line) as { _tag?: string; eventId?: string }
+              if (event._tag === 'Stop' && event.eventId) {
+                const responseFile = path.join(sessionDir, `response-${event.eventId}.json`)
+                await fs.writeFile(
+                  responseFile,
+                  JSON.stringify({ instruction: 'run npm test' }),
+                  'utf-8'
+                )
+                return
+              }
             }
           }
         } catch {
-          // Events file might not exist yet
+          // Event files might not exist yet
         }
       })()
 

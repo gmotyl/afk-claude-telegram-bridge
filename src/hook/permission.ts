@@ -17,7 +17,7 @@ import * as path from 'path'
 import { randomUUID } from 'crypto'
 import { type HookArgs } from './args'
 import { permissionRequest } from '../types/events'
-import { writeEvent } from '../services/ipc'
+import { writeEventAtomic } from '../services/ipc'
 import { type HookError, hookError } from '../types/errors'
 
 // ============================================================================
@@ -69,7 +69,6 @@ export const requestPermission = (
 
       // Resolve per-session IPC directory
       const sessionIpcDir = path.join(ipcBaseDir, sessionId)
-      const eventsFile = path.join(sessionIpcDir, 'events.jsonl')
 
       const commandDisplay = hookArgs.command || hookArgs.tool
       const event = permissionRequest(requestId, hookArgs.tool, commandDisplay, slotNum, sessionId)
@@ -77,7 +76,7 @@ export const requestPermission = (
       // Ensure IPC directory exists (may be missing after /afk-reset)
       await fs.mkdir(sessionIpcDir, { recursive: true })
 
-      const writeResult = await writeEvent(eventsFile, event)()
+      const writeResult = await writeEventAtomic(sessionIpcDir, event)()
       if (!('right' in writeResult)) {
         throw hookError(`Failed to write permission request to IPC: ${String((writeResult as any).left)}`)
       }

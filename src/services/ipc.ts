@@ -7,6 +7,8 @@
 
 import * as TE from 'fp-ts/TaskEither'
 import * as fs from 'fs/promises'
+import * as path from 'path'
+import { randomUUID } from 'crypto'
 import { type IpcEvent } from '../types/events'
 import {
   type IpcError,
@@ -99,16 +101,12 @@ export const readEventQueue = (eventsFile: string): TE.TaskEither<IpcError, IpcE
  * If file doesn't exist, creates it.
  * Appends the event as a JSON line (with newline terminator).
  *
+ * WARNING: This has a race condition when the daemon reads and deletes the file.
+ * Prefer writeEventAtomic() for hook→daemon communication.
+ *
  * @param eventsFile - Path to the JSONL events file
  * @param event - Typed IpcEvent object to write
  * @returns TaskEither<IpcError, void> - Left(error) or Right(void)
- *
- * @example
- * const event = heartbeat(1)
- * const result = await writeEvent('/tmp/ipc/events.jsonl', event)()
- * if (E.isRight(result)) {
- *   console.log('Event written')
- * }
  */
 export const writeEvent = (
   eventsFile: string,
@@ -116,13 +114,35 @@ export const writeEvent = (
 ): TE.TaskEither<IpcError, void> => {
   return TE.tryCatch(
     async () => {
-      // Serialize event to JSON and add newline
       const line = JSON.stringify(event) + '\n'
-
-      // Append to file (creates if doesn't exist)
       await fs.appendFile(eventsFile, line, 'utf-8')
     },
     writeErrorHandler(eventsFile)
+  )
+}
+
+/**
+ * Write a single event to a unique per-event JSONL file (race-safe).
+ *
+ * Each event gets its own file (event-{uuid}.jsonl) to prevent a race condition
+ * where the daemon reads a shared events.jsonl, then deletes it — losing any events
+ * appended between the read and delete.
+ *
+ * @param ipcDir - Path to the session IPC directory
+ * @param event - Typed IpcEvent object to write
+ * @returns TaskEither<IpcError, void>
+ */
+export const writeEventAtomic = (
+  ipcDir: string,
+  event: IpcEvent
+): TE.TaskEither<IpcError, void> => {
+  const uniqueFile = path.join(ipcDir, `event-${randomUUID()}.jsonl`)
+  return TE.tryCatch(
+    async () => {
+      const line = JSON.stringify(event) + '\n'
+      await fs.writeFile(uniqueFile, line, 'utf-8')
+    },
+    writeErrorHandler(uniqueFile)
   )
 }
 

@@ -58,38 +58,49 @@ describe('Stop Hook Handler', () => {
   })
 
   /**
-   * Helper: write a response file after a short delay by reading the events file
+   * Helper: find the Stop event from per-event files in the session directory.
+   */
+  const findStopEventId = async (): Promise<string | null> => {
+    const files = await fs.readdir(sessionDir)
+    const eventFiles = files.filter(f => f.startsWith('event-') && f.endsWith('.jsonl')).sort()
+    for (const file of eventFiles) {
+      const content = await fs.readFile(path.join(sessionDir, file), 'utf-8')
+      const lines = content.split('\n').filter(l => l.trim())
+      for (const line of lines) {
+        const event = JSON.parse(line) as { eventId?: string; _tag?: string }
+        if (event._tag === 'Stop' && event.eventId) return event.eventId
+      }
+    }
+    return null
+  }
+
+  /**
+   * Helper: write a response file after a short delay by reading per-event files
    * to discover the eventId from the Stop event.
    */
   const writeResponseAfterDelay = (delayMs: number, instruction: string) =>
     (async () => {
       await new Promise(resolve => setTimeout(resolve, delayMs))
-
-      const eventsFile = path.join(sessionDir, 'events.jsonl')
-      const content = await fs.readFile(eventsFile, 'utf-8')
-      const lines = content.split('\n').filter(l => l.trim())
-      const lastLine = lines[lines.length - 1]
-      if (lastLine) {
-        const event = JSON.parse(lastLine) as { eventId?: string; _tag?: string }
-        if (event._tag === 'Stop' && event.eventId) {
-          const responseFile = path.join(sessionDir, `response-${event.eventId}.json`)
-          await fs.writeFile(responseFile, JSON.stringify({ instruction }), 'utf-8')
-        }
+      const eventId = await findStopEventId()
+      if (eventId) {
+        const responseFile = path.join(sessionDir, `response-${eventId}.json`)
+        await fs.writeFile(responseFile, JSON.stringify({ instruction }), 'utf-8')
       }
     })()
 
   describe('handleStopRequest — basic polling', () => {
-    it('writes Stop event to per-session events.jsonl', async () => {
+    it('writes Stop event to per-event file in session directory', async () => {
       const responsePromise = writeResponseAfterDelay(100, 'test')
 
       const result = await handleStopRequest(ipcBaseDir, sessionId, slotNum, 'last msg')()
       await responsePromise
 
-      const eventsFile = path.join(sessionDir, 'events.jsonl')
-      const content = await fs.readFile(eventsFile, 'utf-8')
-      const lines = content.split('\n').filter(l => l.trim())
-      expect(lines.length).toBeGreaterThanOrEqual(1)
+      const files = await fs.readdir(sessionDir)
+      const eventFiles = files.filter(f => f.startsWith('event-') && f.endsWith('.jsonl'))
+      expect(eventFiles.length).toBeGreaterThanOrEqual(1)
 
+      const content = await fs.readFile(path.join(sessionDir, eventFiles[0]!), 'utf-8')
+      const lines = content.split('\n').filter(l => l.trim())
       const firstEvent = JSON.parse(lines[0]!) as { _tag: string; slotNum: number; lastMessage: string }
       expect(firstEvent._tag).toBe('Stop')
       expect(firstEvent.slotNum).toBe(slotNum)
@@ -139,17 +150,10 @@ describe('Stop Hook Handler', () => {
 
       const responsePromise = (async () => {
         await new Promise(resolve => setTimeout(resolve, 100))
-
-        const eventsFile = path.join(sessionDir, 'events.jsonl')
-        const content = await fs.readFile(eventsFile, 'utf-8')
-        const lines = content.split('\n').filter(l => l.trim())
-        const lastLine = lines[lines.length - 1]
-        if (lastLine) {
-          const event = JSON.parse(lastLine) as { eventId?: string; _tag?: string }
-          if (event._tag === 'Stop' && event.eventId) {
-            responseFilePath = path.join(sessionDir, `response-${event.eventId}.json`)
-            await fs.writeFile(responseFilePath, JSON.stringify({ instruction: 'test' }), 'utf-8')
-          }
+        const eventId = await findStopEventId()
+        if (eventId) {
+          responseFilePath = path.join(sessionDir, `response-${eventId}.json`)
+          await fs.writeFile(responseFilePath, JSON.stringify({ instruction: 'test' }), 'utf-8')
         }
       })()
 
@@ -185,8 +189,9 @@ describe('Stop Hook Handler', () => {
       await handleStopRequest(ipcBaseDir, sessionId, slotNum, 'last msg')()
       await responsePromise
 
-      const eventsFile = path.join(sessionDir, 'events.jsonl')
-      const content = await fs.readFile(eventsFile, 'utf-8')
+      const files = await fs.readdir(sessionDir)
+      const eventFiles = files.filter(f => f.startsWith('event-') && f.endsWith('.jsonl')).sort()
+      const content = await fs.readFile(path.join(sessionDir, eventFiles[0]!), 'utf-8')
       const lines = content.split('\n').filter(l => l.trim())
       const firstEvent = JSON.parse(lines[0]!) as { _tag: string; sessionId?: string }
       expect(firstEvent._tag).toBe('Stop')
