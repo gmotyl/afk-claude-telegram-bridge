@@ -1,4 +1,5 @@
 // src/hook/__tests__/args.test.ts
+import * as E from 'fp-ts/Either'
 import * as args from '../args'
 
 describe('Hook Argument Parser', () => {
@@ -6,9 +7,9 @@ describe('Hook Argument Parser', () => {
     describe('valid permission_request', () => {
       it('parses permission_request with tool and command', () => {
         const result = args.parseHookArgs(['permission_request', 'Bash', 'npm install'])
-        expect(args.isOk(result)).toBe(true)
+        expect(E.isRight(result)).toBe(true)
 
-        if (args.isOk(result)) {
+        if (E.isRight(result)) {
           expect((result as any).right).toEqual({
             type: 'permission_request',
             tool: 'Bash',
@@ -19,9 +20,9 @@ describe('Hook Argument Parser', () => {
 
       it('parses permission_request with multi-word command', () => {
         const result = args.parseHookArgs(['permission_request', 'Node', 'node --version && npm list'])
-        expect(args.isOk(result)).toBe(true)
+        expect(E.isRight(result)).toBe(true)
 
-        if (args.isOk(result)) {
+        if (E.isRight(result)) {
           const hookArgs = (result as any).right
           expect(hookArgs.type).toBe('permission_request')
           expect(hookArgs.tool).toBe('Node')
@@ -33,9 +34,9 @@ describe('Hook Argument Parser', () => {
     describe('valid stop', () => {
       it('parses stop with no additional arguments', () => {
         const result = args.parseHookArgs(['stop'])
-        expect(args.isOk(result)).toBe(true)
+        expect(E.isRight(result)).toBe(true)
 
-        if (args.isOk(result)) {
+        if (E.isRight(result)) {
           expect((result as any).right).toEqual({
             type: 'stop',
           })
@@ -44,9 +45,9 @@ describe('Hook Argument Parser', () => {
 
       it('ignores extra arguments after stop', () => {
         const result = args.parseHookArgs(['stop', 'extra', 'args'])
-        expect(args.isOk(result)).toBe(true)
+        expect(E.isRight(result)).toBe(true)
 
-        if (args.isOk(result)) {
+        if (E.isRight(result)) {
           const hookArgs = (result as any).right
           expect(hookArgs.type).toBe('stop')
           expect(hookArgs.tool).toBeUndefined()
@@ -59,9 +60,9 @@ describe('Hook Argument Parser', () => {
     describe('valid notification', () => {
       it('parses notification with message', () => {
         const result = args.parseHookArgs(['notification', 'Task completed'])
-        expect(args.isOk(result)).toBe(true)
+        expect(E.isRight(result)).toBe(true)
 
-        if (args.isOk(result)) {
+        if (E.isRight(result)) {
           expect((result as any).right).toEqual({
             type: 'notification',
             message: 'Task completed',
@@ -71,9 +72,9 @@ describe('Hook Argument Parser', () => {
 
       it('parses notification with multi-word message', () => {
         const result = args.parseHookArgs(['notification', 'Build failed with error: timeout'])
-        expect(args.isOk(result)).toBe(true)
+        expect(E.isRight(result)).toBe(true)
 
-        if (args.isOk(result)) {
+        if (E.isRight(result)) {
           const hookArgs = (result as any).right
           expect(hookArgs.type).toBe('notification')
           expect(hookArgs.message).toBe('Build failed with error: timeout')
@@ -84,67 +85,67 @@ describe('Hook Argument Parser', () => {
     describe('error cases', () => {
       it('returns Left for no arguments', () => {
         const result = args.parseHookArgs([])
-        expect(args.isErr(result)).toBe(true)
+        expect(E.isLeft(result)).toBe(true)
 
-        if (args.isErr(result)) {
+        if (E.isLeft(result)) {
           expect((result as any).left._tag).toBe('HookParseError')
         }
       })
 
       it('returns Left for invalid hook type', () => {
         const result = args.parseHookArgs(['invalid_type'])
-        expect(args.isErr(result)).toBe(true)
+        expect(E.isLeft(result)).toBe(true)
 
-        if (args.isErr(result)) {
+        if (E.isLeft(result)) {
           expect((result as any).left._tag).toBe('HookParseError')
         }
       })
 
       it('returns Left for permission_request without tool', () => {
         const result = args.parseHookArgs(['permission_request'])
-        expect(args.isErr(result)).toBe(true)
+        expect(E.isLeft(result)).toBe(true)
 
-        if (args.isErr(result)) {
+        if (E.isLeft(result)) {
           expect((result as any).left._tag).toBe('HookParseError')
         }
       })
 
       it('returns Left for permission_request without command', () => {
         const result = args.parseHookArgs(['permission_request', 'Bash'])
-        expect(args.isErr(result)).toBe(true)
+        expect(E.isLeft(result)).toBe(true)
 
-        if (args.isErr(result)) {
+        if (E.isLeft(result)) {
           expect((result as any).left._tag).toBe('HookParseError')
         }
       })
 
       it('returns Left for notification without message', () => {
         const result = args.parseHookArgs(['notification'])
-        expect(args.isErr(result)).toBe(true)
+        expect(E.isLeft(result)).toBe(true)
 
-        if (args.isErr(result)) {
+        if (E.isLeft(result)) {
           expect((result as any).left._tag).toBe('HookParseError')
         }
       })
 
       it('returns Left for empty string as hook type', () => {
         const result = args.parseHookArgs([''])
-        expect(args.isErr(result)).toBe(true)
+        expect(E.isLeft(result)).toBe(true)
       })
 
       it('returns Left for empty string as tool in permission_request', () => {
         const result = args.parseHookArgs(['permission_request', '', 'npm install'])
-        expect(args.isErr(result)).toBe(true)
+        expect(E.isLeft(result)).toBe(true)
       })
 
       it('returns Left for empty string as command in permission_request', () => {
         const result = args.parseHookArgs(['permission_request', 'Bash', ''])
-        expect(args.isErr(result)).toBe(true)
+        expect(E.isLeft(result)).toBe(true)
       })
 
       it('returns Left for empty string as message in notification', () => {
         const result = args.parseHookArgs(['notification', ''])
-        expect(args.isErr(result)).toBe(true)
+        expect(E.isLeft(result)).toBe(true)
       })
     })
 
@@ -152,7 +153,7 @@ describe('Hook Argument Parser', () => {
       it('includes helpful error message for missing arguments', () => {
         const result = args.parseHookArgs(['permission_request'])
 
-        if (args.isErr(result)) {
+        if (E.isLeft(result)) {
           const error = (result as any).left
           expect(error.message).toContain('permission_request')
           expect(error.message.toLowerCase()).toContain('argument')
@@ -162,7 +163,7 @@ describe('Hook Argument Parser', () => {
       it('includes helpful error message for invalid hook type', () => {
         const result = args.parseHookArgs(['unknown'])
 
-        if (args.isErr(result)) {
+        if (E.isLeft(result)) {
           const error = (result as any).left
           expect(error.message).toContain('unknown')
           expect(error.message.toLowerCase()).toContain('hook')
@@ -173,7 +174,7 @@ describe('Hook Argument Parser', () => {
     describe('integration with Either', () => {
       it('works with fold for success case', () => {
         const result = args.parseHookArgs(['stop'])
-        const message = args.fold(
+        const message = E.fold(
           (err: any) => `Parse error: ${err.message}`,
           (ok: any) => `Hook type: ${ok.type}`
         )(result)
@@ -183,7 +184,7 @@ describe('Hook Argument Parser', () => {
 
       it('works with fold for error case', () => {
         const result = args.parseHookArgs(['invalid'])
-        const message = args.fold(
+        const message = E.fold(
           (err: any) => `Parse error: ${err.message}`,
           (ok: any) => `Hook type: ${ok.type}`
         )(result)
@@ -247,9 +248,9 @@ describe('parseStdinInput', () => {
         session_id: 'sess-123',
       })
       const result = args.parseStdinInput(json)
-      expect(args.isOk(result)).toBe(true)
+      expect(E.isRight(result)).toBe(true)
 
-      if (args.isOk(result)) {
+      if (E.isRight(result)) {
         const hookArgs = (result as any).right
         expect(hookArgs.type).toBe('stop')
         expect(hookArgs.lastMessage).toBe('Task completed successfully')
@@ -261,9 +262,9 @@ describe('parseStdinInput', () => {
     it('parses Stop event with minimal fields', () => {
       const json = JSON.stringify({ hook_event_name: 'Stop' })
       const result = args.parseStdinInput(json)
-      expect(args.isOk(result)).toBe(true)
+      expect(E.isRight(result)).toBe(true)
 
-      if (args.isOk(result)) {
+      if (E.isRight(result)) {
         const hookArgs = (result as any).right
         expect(hookArgs.type).toBe('stop')
         expect(hookArgs.lastMessage).toBeUndefined()
@@ -280,9 +281,9 @@ describe('parseStdinInput', () => {
         tool_input: { command: 'npm test' },
       })
       const result = args.parseStdinInput(json)
-      expect(args.isOk(result)).toBe(true)
+      expect(E.isRight(result)).toBe(true)
 
-      if (args.isOk(result)) {
+      if (E.isRight(result)) {
         const hookArgs = (result as any).right
         expect(hookArgs.type).toBe('permission_request')
         expect(hookArgs.tool).toBe('Bash')
@@ -297,9 +298,9 @@ describe('parseStdinInput', () => {
         tool_name: 'Read',
       })
       const result = args.parseStdinInput(json)
-      expect(args.isOk(result)).toBe(true)
+      expect(E.isRight(result)).toBe(true)
 
-      if (args.isOk(result)) {
+      if (E.isRight(result)) {
         const hookArgs = (result as any).right
         expect(hookArgs.type).toBe('permission_request')
         expect(hookArgs.tool).toBe('Read')
@@ -320,9 +321,9 @@ describe('parseStdinInput', () => {
         session_id: 'sess-edit',
       })
       const result = args.parseStdinInput(json)
-      expect(args.isOk(result)).toBe(true)
+      expect(E.isRight(result)).toBe(true)
 
-      if (args.isOk(result)) {
+      if (E.isRight(result)) {
         const hookArgs = (result as any).right
         expect(hookArgs.type).toBe('permission_request')
         expect(hookArgs.tool).toBe('Edit')
@@ -343,9 +344,9 @@ describe('parseStdinInput', () => {
         session_id: 'sess-write',
       })
       const result = args.parseStdinInput(json)
-      expect(args.isOk(result)).toBe(true)
+      expect(E.isRight(result)).toBe(true)
 
-      if (args.isOk(result)) {
+      if (E.isRight(result)) {
         const hookArgs = (result as any).right
         expect(hookArgs.type).toBe('permission_request')
         expect(hookArgs.tool).toBe('Write')
@@ -360,9 +361,9 @@ describe('parseStdinInput', () => {
         tool_input: { query: 'search term', path: '/some/dir' },
       })
       const result = args.parseStdinInput(json)
-      expect(args.isOk(result)).toBe(true)
+      expect(E.isRight(result)).toBe(true)
 
-      if (args.isOk(result)) {
+      if (E.isRight(result)) {
         const hookArgs = (result as any).right
         expect(hookArgs.command).toContain('query: search term')
         expect(hookArgs.command).toContain('path: /some/dir')
@@ -377,9 +378,9 @@ describe('parseStdinInput', () => {
         session_id: 'claude-sess-123',
       })
       const result = args.parseStdinInput(json)
-      expect(args.isOk(result)).toBe(true)
+      expect(E.isRight(result)).toBe(true)
 
-      if (args.isOk(result)) {
+      if (E.isRight(result)) {
         const hookArgs = (result as any).right
         expect(hookArgs.sessionId).toBe('claude-sess-123')
       }
@@ -393,9 +394,9 @@ describe('parseStdinInput', () => {
         message: 'Build complete',
       })
       const result = args.parseStdinInput(json)
-      expect(args.isOk(result)).toBe(true)
+      expect(E.isRight(result)).toBe(true)
 
-      if (args.isOk(result)) {
+      if (E.isRight(result)) {
         const hookArgs = (result as any).right
         expect(hookArgs.type).toBe('notification')
         expect(hookArgs.message).toBe('Build complete')
@@ -405,9 +406,9 @@ describe('parseStdinInput', () => {
     it('parses Notification without message', () => {
       const json = JSON.stringify({ hook_event_name: 'Notification' })
       const result = args.parseStdinInput(json)
-      expect(args.isOk(result)).toBe(true)
+      expect(E.isRight(result)).toBe(true)
 
-      if (args.isOk(result)) {
+      if (E.isRight(result)) {
         const hookArgs = (result as any).right
         expect(hookArgs.type).toBe('notification')
         expect(hookArgs.message).toBeUndefined()
@@ -421,9 +422,9 @@ describe('parseStdinInput', () => {
         session_id: 'claude-sess-456',
       })
       const result = args.parseStdinInput(json)
-      expect(args.isOk(result)).toBe(true)
+      expect(E.isRight(result)).toBe(true)
 
-      if (args.isOk(result)) {
+      if (E.isRight(result)) {
         const hookArgs = (result as any).right
         expect(hookArgs.sessionId).toBe('claude-sess-456')
       }
@@ -433,9 +434,9 @@ describe('parseStdinInput', () => {
   describe('error cases', () => {
     it('returns Left for invalid JSON', () => {
       const result = args.parseStdinInput('not json at all')
-      expect(args.isErr(result)).toBe(true)
+      expect(E.isLeft(result)).toBe(true)
 
-      if (args.isErr(result)) {
+      if (E.isLeft(result)) {
         expect((result as any).left._tag).toBe('HookParseError')
         expect((result as any).left.message).toContain('Invalid JSON')
       }
@@ -444,9 +445,9 @@ describe('parseStdinInput', () => {
     it('returns Left for missing hook_event_name', () => {
       const json = JSON.stringify({ tool_name: 'Bash' })
       const result = args.parseStdinInput(json)
-      expect(args.isErr(result)).toBe(true)
+      expect(E.isLeft(result)).toBe(true)
 
-      if (args.isErr(result)) {
+      if (E.isLeft(result)) {
         expect((result as any).left._tag).toBe('HookParseError')
         expect((result as any).left.message).toContain('hook_event_name')
       }
@@ -455,9 +456,9 @@ describe('parseStdinInput', () => {
     it('returns Left for unknown hook_event_name', () => {
       const json = JSON.stringify({ hook_event_name: 'Unknown' })
       const result = args.parseStdinInput(json)
-      expect(args.isErr(result)).toBe(true)
+      expect(E.isLeft(result)).toBe(true)
 
-      if (args.isErr(result)) {
+      if (E.isLeft(result)) {
         expect((result as any).left._tag).toBe('HookParseError')
         expect((result as any).left.message).toContain('Unknown')
       }
@@ -465,12 +466,12 @@ describe('parseStdinInput', () => {
 
     it('returns Left for non-object JSON', () => {
       const result = args.parseStdinInput('"just a string"')
-      expect(args.isErr(result)).toBe(true)
+      expect(E.isLeft(result)).toBe(true)
     })
 
     it('returns Left for null JSON', () => {
       const result = args.parseStdinInput('null')
-      expect(args.isErr(result)).toBe(true)
+      expect(E.isLeft(result)).toBe(true)
     })
   })
 })

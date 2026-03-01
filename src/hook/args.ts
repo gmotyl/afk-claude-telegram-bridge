@@ -4,7 +4,7 @@
  * Determines hook type and extracts type-specific data.
  */
 
-import * as Either from '../types/either'
+import * as E from 'fp-ts/Either'
 import { HookParseError, hookParseError } from '../types/errors'
 
 // ============================================================================
@@ -39,17 +39,17 @@ export interface HookArgs {
  * @param args - Array of command-line arguments (typically process.argv.slice(2))
  * @returns Either<HookParseError, HookArgs>
  */
-export const parseHookArgs = (args: string[]): Either.Either<HookParseError, HookArgs> => {
+export const parseHookArgs = (args: string[]): E.Either<HookParseError, HookArgs> => {
   // Check for no arguments
   if (args.length === 0) {
-    return Either.err(hookParseError('No hook type provided'))
+    return E.left(hookParseError('No hook type provided'))
   }
 
   const [hookType, ...rest] = args
 
   // Check for empty hook type
   if (!hookType || hookType.trim() === '') {
-    return Either.err(hookParseError('Hook type cannot be empty'))
+    return E.left(hookParseError('Hook type cannot be empty'))
   }
 
   // Parse based on hook type
@@ -58,13 +58,13 @@ export const parseHookArgs = (args: string[]): Either.Either<HookParseError, Hoo
       return parsePermissionRequest(rest)
 
     case 'stop':
-      return Either.ok({ type: 'stop' })
+      return E.right({ type: 'stop' })
 
     case 'notification':
       return parseNotification(rest)
 
     default:
-      return Either.err(
+      return E.left(
         hookParseError(`Invalid hook type '${hookType}'. Expected 'permission_request', 'stop', or 'notification'`)
       )
   }
@@ -74,9 +74,9 @@ export const parseHookArgs = (args: string[]): Either.Either<HookParseError, Hoo
 // Permission Request Parser
 // ============================================================================
 
-const parsePermissionRequest = (args: string[]): Either.Either<HookParseError, HookArgs> => {
+const parsePermissionRequest = (args: string[]): E.Either<HookParseError, HookArgs> => {
   if (args.length < 2) {
-    return Either.err(
+    return E.left(
       hookParseError('permission_request requires tool and command arguments')
     )
   }
@@ -86,15 +86,15 @@ const parsePermissionRequest = (args: string[]): Either.Either<HookParseError, H
 
   // Validate tool is not empty
   if (!tool || tool.trim() === '') {
-    return Either.err(hookParseError('Tool name cannot be empty'))
+    return E.left(hookParseError('Tool name cannot be empty'))
   }
 
   // Validate command is not empty
   if (!command || command.trim() === '') {
-    return Either.err(hookParseError('Command cannot be empty'))
+    return E.left(hookParseError('Command cannot be empty'))
   }
 
-  return Either.ok({
+  return E.right({
     type: 'permission_request',
     tool,
     command,
@@ -105,9 +105,9 @@ const parsePermissionRequest = (args: string[]): Either.Either<HookParseError, H
 // Notification Parser
 // ============================================================================
 
-const parseNotification = (args: string[]): Either.Either<HookParseError, HookArgs> => {
+const parseNotification = (args: string[]): E.Either<HookParseError, HookArgs> => {
   if (args.length < 1) {
-    return Either.err(
+    return E.left(
       hookParseError('notification requires a message argument')
     )
   }
@@ -116,10 +116,10 @@ const parseNotification = (args: string[]): Either.Either<HookParseError, HookAr
 
   // Validate message is not empty
   if (!message || message.trim() === '') {
-    return Either.err(hookParseError('Message cannot be empty'))
+    return E.left(hookParseError('Message cannot be empty'))
   }
 
-  return Either.ok({
+  return E.right({
     type: 'notification',
     message,
   })
@@ -199,33 +199,33 @@ const mapEventName = (eventName: string): HookType | null => {
  * @param json - Raw JSON string from stdin
  * @returns Either<HookParseError, HookArgs>
  */
-export const parseStdinInput = (json: string): Either.Either<HookParseError, HookArgs> => {
+export const parseStdinInput = (json: string): E.Either<HookParseError, HookArgs> => {
   let parsed: Record<string, unknown>
   try {
     parsed = JSON.parse(json)
   } catch {
-    return Either.err(hookParseError(`Invalid JSON on stdin: ${json.slice(0, 100)}`))
+    return E.left(hookParseError(`Invalid JSON on stdin: ${json.slice(0, 100)}`))
   }
 
   if (typeof parsed !== 'object' || parsed === null) {
-    return Either.err(hookParseError('Stdin JSON must be an object'))
+    return E.left(hookParseError('Stdin JSON must be an object'))
   }
 
   const eventName = parsed.hook_event_name
   if (typeof eventName !== 'string' || !eventName) {
-    return Either.err(hookParseError('Missing or invalid hook_event_name in stdin JSON'))
+    return E.left(hookParseError('Missing or invalid hook_event_name in stdin JSON'))
   }
 
   const hookType = mapEventName(eventName)
   if (hookType === null) {
-    return Either.err(
+    return E.left(
       hookParseError(`Unknown hook_event_name '${eventName}'. Expected 'Stop', 'PreToolUse', or 'Notification'`)
     )
   }
 
   switch (hookType) {
     case 'stop':
-      return Either.ok({
+      return E.right({
         type: 'stop' as const,
         ...(typeof parsed.session_id === 'string' && { sessionId: parsed.session_id }),
         ...(typeof parsed.stop_hook_active === 'boolean' && { stopHookActive: parsed.stop_hook_active }),
@@ -238,7 +238,7 @@ export const parseStdinInput = (json: string): Either.Either<HookParseError, Hoo
         : null
       const command = toolInput ? formatToolCommand(typeof parsed.tool_name === 'string' ? parsed.tool_name : '', toolInput) : undefined
 
-      return Either.ok({
+      return E.right({
         type: 'permission_request' as const,
         ...(typeof parsed.session_id === 'string' && { sessionId: parsed.session_id }),
         ...(typeof parsed.tool_name === 'string' && { tool: parsed.tool_name }),
@@ -248,7 +248,7 @@ export const parseStdinInput = (json: string): Either.Either<HookParseError, Hoo
     }
 
     case 'notification':
-      return Either.ok({
+      return E.right({
         type: 'notification' as const,
         ...(typeof parsed.session_id === 'string' && { sessionId: parsed.session_id }),
         ...(typeof parsed.message === 'string' && { message: parsed.message }),
@@ -256,15 +256,3 @@ export const parseStdinInput = (json: string): Either.Either<HookParseError, Hoo
   }
 }
 
-// ============================================================================
-// Re-export Either utilities for use in tests
-// ============================================================================
-
-export const ok = Either.ok
-export const err = Either.err
-export const isOk = Either.isOk
-export const isErr = Either.isErr
-export const fold = Either.fold
-export const mapError = Either.mapError
-export const unwrapOr = Either.unwrapOr
-export const pipe = Either.pipe
