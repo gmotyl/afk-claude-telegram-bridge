@@ -13,7 +13,7 @@ Disable AFK mode. Stop forwarding events to Telegram.
 
 1. Deactivate the active AFK session:
    ```bash
-   python3 "${CLAUDE_CONFIG_DIR:-$HOME/.claude}"/hooks/telegram-bridge/hook.py deactivate "current"
+   "${CLAUDE_CONFIG_DIR:-$HOME/.claude}"/hooks/telegram-bridge/hook.sh --deactivate "current"
    ```
 
 2. Confirm to user: "AFK mode deactivated. Back to local control."

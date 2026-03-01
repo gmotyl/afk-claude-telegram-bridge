@@ -26,28 +26,27 @@ Installs a complete Telegram ↔ Claude Code bridge that allows you to:
 
 ## Installation
 
-Run the installer — it builds, copies files, registers hooks, installs `/afk` and `/back` commands, and walks you through Telegram bot setup:
+Install via curl (recommended):
 
 ```bash
-# From a local clone:
-git clone https://github.com/gmotyl/afk-claude-telegram-bridge.git
-cd afk-claude-telegram-bridge
-npm install && npm run deploy
-
-# Or from skills directory:
-bash ~/.claude/skills/afk-claude-telegram-bridge/install.sh
-
-# Or via curl:
 curl -fsSL https://raw.githubusercontent.com/gmotyl/afk-claude-telegram-bridge/main/install.sh | bash
 ```
 
-The installer handles everything:
-- Builds TypeScript and copies hook.js, bridge.js, hook.sh to `~/.claude/hooks/telegram-bridge/`
-- Installs `/afk` and `/back` commands to `~/.claude/commands/`
+Or from a local clone:
+
+```bash
+git clone https://github.com/gmotyl/afk-claude-telegram-bridge.git
+cd afk-claude-telegram-bridge
+npm install && npm run deploy
+```
+
+The installer downloads pre-built binaries from GitHub and handles everything:
+- Copies hook.js, bridge.js, cli.js, hook.sh to `~/.claude/hooks/telegram-bridge/`
+- Installs `/afk`, `/back`, and `/afk-reset` commands to `~/.claude/commands/`
 - Registers Stop, Notification, and PreToolUse hooks in `~/.claude/settings.json`
 - Prompts for your bot token and auto-detects your Telegram group
 
-**Restart Claude Code after installation** to load the new `/afk` and `/back` commands.
+**Restart Claude Code after installation** to load the new commands.
 
 ### Prerequisites
 
@@ -120,6 +119,7 @@ After installation:
 ~/.claude/commands/
   afk.md         — /afk command
   back.md        — /back command
+  afk-reset.md   — /afk-reset command
 ```
 
 ## Commands Reference
@@ -128,6 +128,7 @@ After installation:
 |---------|-------------|
 | `hook.sh --activate <session_id> [project]` | Activate AFK mode |
 | `hook.sh --deactivate <session_id>` | Deactivate AFK mode |
+| `hook.sh --reset` | Nuclear reset (kill daemons, clear state) |
 | `hook.sh --status` | Show active sessions |
 | `hook.sh --setup` | Configure bot token/chat_id |
 | `hook.sh --help` | Show help |
@@ -144,6 +145,10 @@ After installation:
 - Node.js 18+
 - bash
 - Telegram bot token
+
+## Changelog
+
+See [CHANGELOG.md](CHANGELOG.md) for release history.
 
 ## Credits
 
