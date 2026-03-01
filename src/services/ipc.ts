@@ -170,18 +170,19 @@ export interface StopResponse {
 }
 
 /**
- * Write a response file for a stop event.
- * The hook polls for this file to receive the next instruction.
+ * Write a response file for an event.
+ * Used for both stop responses ({ instruction }) and permission responses ({ approved }).
+ * The hook polls for this file to receive the response.
  *
  * @param ipcDir - Path to the IPC directory
- * @param eventId - The event ID from the stop event
- * @param response - The response containing the instruction
+ * @param eventId - The event ID from the event
+ * @param response - JSON-serializable response payload
  * @returns TaskEither<IpcError, void>
  */
 export const writeResponse = (
   ipcDir: string,
   eventId: string,
-  response: StopResponse
+  response: Record<string, unknown>
 ): TE.TaskEither<IpcError, void> => {
   const responsePath = `${ipcDir}/response-${eventId}.json`
   return TE.tryCatch(

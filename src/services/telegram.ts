@@ -12,8 +12,6 @@ const CONTENT_TYPE_JSON = 'application/json'
 
 /**
  * Convert an unknown error to a standardized Error instance
- * @param error - Any thrown error (can be Error, string, or unknown type)
- * @returns Standardized Error instance
  */
 const convertError = (error: unknown): Error => {
   if (error instanceof Error) {
@@ -33,7 +31,7 @@ export interface TelegramButton {
 /**
  * Telegram API response structure
  */
-interface TelegramApiResponse {
+export interface TelegramApiResponse {
   readonly ok: boolean
   readonly result?: unknown
   readonly error_code?: number
@@ -42,9 +40,6 @@ interface TelegramApiResponse {
 
 /**
  * Build Telegram Bot API endpoint URL
- * @param botToken - The bot token from BotFather
- * @param method - The API method name (e.g. 'sendMessage')
- * @returns Full URL to the API endpoint
  */
 const buildTelegramUrl = (botToken: string, method: string): string => {
   return `${TELEGRAM_API_BASE_URL}/bot${botToken}/${method}`
@@ -52,49 +47,56 @@ const buildTelegramUrl = (botToken: string, method: string): string => {
 
 /**
  * Check if an HTTP response indicates an error
- * @param statusCode - HTTP status code
- * @param response - Parsed Telegram API response
- * @returns Error message if response is error, undefined if success
  */
 const getResponseError = (
   statusCode: number,
   response: TelegramApiResponse
 ): string | undefined => {
-  // Non-2xx HTTP status
   if (statusCode < 200 || statusCode >= 300) {
     return `Telegram API error: HTTP ${statusCode} - ${response.description || 'Unknown error'}`
   }
-
-  // Telegram API returns ok: false
   if (!response.ok) {
     return `Telegram API error: ${response.description || 'Unknown error'}`
   }
-
   return undefined
 }
 
 /**
+ * Generic Telegram Bot API caller
+ */
+export const callTelegramApi = (
+  botToken: string,
+  method: string,
+  body: Record<string, unknown>
+): TE.TaskEither<Error, TelegramApiResponse> => {
+  return TE.tryCatch(
+    async () => {
+      const url = buildTelegramUrl(botToken, method)
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': CONTENT_TYPE_JSON },
+        body: JSON.stringify(body)
+      })
+
+      const data = (await response.json()) as TelegramApiResponse
+      const error = getResponseError(response.status, data)
+      if (error) {
+        throw new Error(error)
+      }
+      return data
+    },
+    convertError
+  )
+}
+
+/**
  * Send a simple text message via Telegram Bot API
- * Returns TaskEither for lazy async error handling
- *
- * @param botToken - The bot token from BotFather
- * @param chatId - The target chat ID (can be string or number)
- * @param text - The message text to send
- * @returns TaskEither<Error, TelegramApiResponse> - Left(error) or Right(response)
- * @throws Error if required parameters (botToken, chatId, text) are missing or empty
- *
- * @example
- * const result = await sendTelegramMessage('token', '-123456', 'Hello!')()
- * if (TE.isRight(result)) {
- *   console.log(result.right.result.message_id)
- * }
  */
 export const sendTelegramMessage = (
   botToken: string,
   chatId: string,
   text: string
 ): TE.TaskEither<Error, TelegramApiResponse> => {
-  // Validate required parameters
   if (!botToken || !chatId || !text) {
     const missing = [
       !botToken && 'botToken',
@@ -106,54 +108,14 @@ export const sendTelegramMessage = (
     return TE.left(new Error(`Missing required parameters: ${missing}`))
   }
 
-  return TE.tryCatch(
-    async () => {
-      const url = buildTelegramUrl(botToken, 'sendMessage')
-      const body = JSON.stringify({
-        chat_id: chatId,
-        text: text
-      })
-
-      const response = await fetch(url, {
-        method: 'POST',
-        headers: {
-          'Content-Type': CONTENT_TYPE_JSON
-        },
-        body: body
-      })
-
-      // Parse JSON response
-      const data = (await response.json()) as TelegramApiResponse
-
-      // Check for errors
-      const error = getResponseError(response.status, data)
-      if (error) {
-        throw new Error(error)
-      }
-
-      return data
-    },
-    convertError
-  )
+  return callTelegramApi(botToken, 'sendMessage', {
+    chat_id: chatId,
+    text: text
+  })
 }
 
 /**
  * Send a message with inline reply buttons via Telegram Bot API
- * Returns TaskEither for lazy async error handling
- *
- * @param botToken - The bot token from BotFather
- * @param chatId - The target chat ID (can be string or number)
- * @param text - The message text to send
- * @param buttons - Array of buttons to display inline
- * @returns TaskEither<Error, TelegramApiResponse> - Left(error) or Right(response)
- * @throws Error if required parameters (botToken, chatId, text) are missing or empty
- *
- * @example
- * const buttons = [
- *   { text: 'Accept', callback_data: 'accept' },
- *   { text: 'Reject', callback_data: 'reject' }
- * ]
- * const result = await sendTelegramReplyWithButtons('token', '-123456', 'Please choose', buttons)()
  */
 export const sendTelegramReplyWithButtons = (
   botToken: string,
@@ -161,7 +123,6 @@ export const sendTelegramReplyWithButtons = (
   text: string,
   buttons: readonly TelegramButton[]
 ): TE.TaskEither<Error, TelegramApiResponse> => {
-  // Validate required parameters
   if (!botToken || !chatId || !text) {
     const missing = [
       !botToken && 'botToken',
@@ -173,37 +134,157 @@ export const sendTelegramReplyWithButtons = (
     return TE.left(new Error(`Missing required parameters: ${missing}`))
   }
 
-  return TE.tryCatch(
-    async () => {
-      const url = buildTelegramUrl(botToken, 'sendMessage')
+  return callTelegramApi(botToken, 'sendMessage', {
+    chat_id: chatId,
+    text: text,
+    reply_markup: {
+      inline_keyboard: [buttons]
+    }
+  })
+}
 
-      const body = JSON.stringify({
-        chat_id: chatId,
-        text: text,
-        reply_markup: {
-          inline_keyboard: [buttons]
-        }
-      })
+/**
+ * Create a forum topic in a supergroup
+ */
+export const createForumTopic = (
+  botToken: string,
+  chatId: string,
+  name: string
+): TE.TaskEither<Error, TelegramApiResponse> => {
+  return callTelegramApi(botToken, 'createForumTopic', {
+    chat_id: chatId,
+    name: name
+  })
+}
 
-      const response = await fetch(url, {
-        method: 'POST',
-        headers: {
-          'Content-Type': CONTENT_TYPE_JSON
-        },
-        body: body
-      })
+/**
+ * Delete a forum topic in a supergroup
+ */
+export const deleteForumTopic = (
+  botToken: string,
+  chatId: string,
+  threadId: number
+): TE.TaskEither<Error, TelegramApiResponse> => {
+  return callTelegramApi(botToken, 'deleteForumTopic', {
+    chat_id: chatId,
+    message_thread_id: threadId
+  })
+}
 
-      // Parse JSON response
-      const data = (await response.json()) as TelegramApiResponse
+/**
+ * Send a message to a specific forum topic
+ */
+export const sendMessageToTopic = (
+  botToken: string,
+  chatId: string,
+  text: string,
+  threadId: number,
+  parseMode?: string
+): TE.TaskEither<Error, TelegramApiResponse> => {
+  const body: Record<string, unknown> = {
+    chat_id: chatId,
+    text: text,
+    message_thread_id: threadId
+  }
+  if (parseMode) {
+    body.parse_mode = parseMode
+  }
+  return callTelegramApi(botToken, 'sendMessage', body)
+}
 
-      // Check for errors
-      const error = getResponseError(response.status, data)
-      if (error) {
-        throw new Error(error)
-      }
+/**
+ * Send a message with inline buttons to a specific forum topic
+ */
+export const sendButtonsToTopic = (
+  botToken: string,
+  chatId: string,
+  text: string,
+  buttons: readonly TelegramButton[],
+  threadId: number
+): TE.TaskEither<Error, TelegramApiResponse> => {
+  return callTelegramApi(botToken, 'sendMessage', {
+    chat_id: chatId,
+    text: text,
+    message_thread_id: threadId,
+    reply_markup: {
+      inline_keyboard: [buttons]
+    }
+  })
+}
 
-      return data
-    },
-    convertError
-  )
+/**
+ * Send a message with multi-row inline buttons to a specific forum topic
+ */
+export const sendMultiRowButtonsToTopic = (
+  botToken: string,
+  chatId: string,
+  text: string,
+  buttonRows: readonly (readonly TelegramButton[])[],
+  threadId: number
+): TE.TaskEither<Error, TelegramApiResponse> => {
+  return callTelegramApi(botToken, 'sendMessage', {
+    chat_id: chatId,
+    text: text,
+    message_thread_id: threadId,
+    reply_markup: {
+      inline_keyboard: buttonRows
+    }
+  })
+}
+
+/**
+ * Edit the text of an existing message
+ */
+export const editMessageText = (
+  botToken: string,
+  chatId: string,
+  messageId: number,
+  text: string,
+  replyMarkup?: { inline_keyboard: readonly (readonly TelegramButton[])[] }
+): TE.TaskEither<Error, TelegramApiResponse> => {
+  const body: Record<string, unknown> = {
+    chat_id: chatId,
+    message_id: messageId,
+    text: text
+  }
+  if (replyMarkup) {
+    body.reply_markup = replyMarkup
+  }
+  return callTelegramApi(botToken, 'editMessageText', body)
+}
+
+/**
+ * Answer a callback query (dismiss loading spinner on button)
+ */
+export const answerCallbackQuery = (
+  botToken: string,
+  callbackQueryId: string,
+  text?: string
+): TE.TaskEither<Error, TelegramApiResponse> => {
+  const body: Record<string, unknown> = {
+    callback_query_id: callbackQueryId
+  }
+  if (text) {
+    body.text = text
+  }
+  return callTelegramApi(botToken, 'answerCallbackQuery', body)
+}
+
+/**
+ * Send a chat action (typing indicator, etc.)
+ */
+export const sendChatAction = (
+  botToken: string,
+  chatId: string,
+  action: string,
+  threadId?: number
+): TE.TaskEither<Error, TelegramApiResponse> => {
+  const body: Record<string, unknown> = {
+    chat_id: chatId,
+    action: action
+  }
+  if (threadId !== undefined) {
+    body.message_thread_id = threadId
+  }
+  return callTelegramApi(botToken, 'sendChatAction', body)
 }
