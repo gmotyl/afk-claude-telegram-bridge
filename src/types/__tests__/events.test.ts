@@ -38,12 +38,13 @@ describe('IpcEvent', () => {
   })
 
   it('PermissionRequest event has correct shape', () => {
-    const event = events.permissionRequest('uuid-123', 'Bash', 'npm install')
+    const event = events.permissionRequest('uuid-123', 'Bash', 'npm install', 2)
     expect(event._tag).toBe('PermissionRequest')
     if (event._tag === 'PermissionRequest') {
       expect(event.requestId).toBe('uuid-123')
       expect(event.tool).toBe('Bash')
       expect(event.command).toBe('npm install')
+      expect(event.slotNum).toBe(2)
     }
   })
 

@@ -138,7 +138,7 @@ describe('loadConfig', () => {
 
     expect(E.isRight(result)).toBe(true)
     if (E.isRight(result)) {
-      expect(result.right.sessionTimeout).toBe(900000)
+      expect(result.right.sessionTimeout).toBe(86400000)
     }
   })
 

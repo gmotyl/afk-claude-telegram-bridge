@@ -3,6 +3,7 @@ export interface Slot {
   readonly projectName: string
   readonly topicName: string
   readonly threadId?: number
+  readonly verbose?: boolean
   readonly activatedAt: Date
   readonly lastHeartbeat: Date
 }

@@ -93,9 +93,9 @@ const normalizeConfig = (obj: Record<string, unknown>, configPath: string): Reco
     result['ipcBaseDir'] = path.join(path.dirname(configPath), 'ipc')
   }
 
-  // Default sessionTimeout to 15 minutes
+  // Default sessionTimeout to 24 hours
   if (!('sessionTimeout' in result)) {
-    result['sessionTimeout'] = 900000
+    result['sessionTimeout'] = 86400000
   }
 
   return result

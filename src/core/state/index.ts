@@ -51,14 +51,13 @@ export const addSlot = (
 /**
  * Remove a slot from state
  * Always succeeds (idempotent)
+ * Truly deletes the key from the slots record (not just sets to undefined)
+ * so that Object.entries/Object.keys won't yield stale entries.
  */
-export const removeSlot = (state: State, slotNum: number): State => ({
-  ...state,
-  slots: {
-    ...state.slots,
-    [slotNum]: undefined
-  }
-})
+export const removeSlot = (state: State, slotNum: number): State => {
+  const { [slotNum]: _, ...rest } = state.slots
+  return { ...state, slots: rest }
+}
 
 /**
  * Update heartbeat timestamp for a slot
@@ -86,7 +85,8 @@ export const heartbeatSlot = (
 }
 
 /**
- * Remove all slots that have timed out
+ * Remove all slots that have timed out.
+ * Truly deletes timed-out keys from the slots record.
  */
 export const cleanupStaleSlots = (
   state: State,
@@ -96,8 +96,10 @@ export const cleanupStaleSlots = (
   const cleaned: Record<number, Slot | undefined> = {}
 
   Object.entries(state.slots).forEach(([key, slot]) => {
-    const slotNum = parseInt(key, 10)
-    cleaned[slotNum] = isSlotActive(slot, timeoutMs, now) ? slot : undefined
+    if (slot && isSlotActive(slot, timeoutMs, now)) {
+      const slotNum = parseInt(key, 10)
+      cleaned[slotNum] = slot
+    }
   })
 
   return { ...state, slots: cleaned }
