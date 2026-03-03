@@ -3,14 +3,14 @@
  * Stop hook handler — active listening loop with daemon health monitoring.
  *
  * When Claude finishes a task, the Stop hook fires. This handler:
- * 1. Writes a Stop event to IPC (notifying the daemon)
- * 2. Polls for a response file containing the next instruction
+ * 1. Writes a Stop event to SQLite (notifying the daemon)
+ * 2. Polls SQLite for a response containing the next instruction
  * 3. Sends KeepAlive events every 60s to prevent daemon timeout
  * 4. Checks daemon health every 30s and auto-restarts if dead
  * 5. Returns the instruction to Claude for execution
  *
  * The loop exits when:
- * - A response file is written (daemon delivers instruction)
+ * - A response is found in SQLite (daemon delivers instruction)
  * - A kill file appears (force stop)
  * - A force_clear file appears (session terminated)
  * - Max recovery attempts exhausted (daemon unrecoverable)
@@ -22,8 +22,7 @@ import * as fs from 'fs/promises'
 import * as path from 'path'
 import { randomUUID } from 'crypto'
 import { stopEvent, keepAlive } from '../types/events'
-import { writeEvent } from '../services/ipc'
-import { readResponse, type StopResponse } from '../services/ipc'
+import { writeEvent, readResponse } from '../services/ipc-sqlite'
 import { checkDaemonHealth, ensureDaemonAlive } from '../services/daemon-health'
 import { type HookError, hookError } from '../types/errors'
 
@@ -35,9 +34,6 @@ import { type HookError, hookError } from '../types/errors'
  * Claude Code Stop hook output schema:
  * - decision: "block" → intercept stop, inject instruction via "reason" field
  * - null → exit 0 without output (let stop proceed normally)
- *
- * When blocking, the instruction text goes in the "reason" field
- * (matching Claude Code's expected schema and Python implementation).
  */
 export interface StopDecision {
   readonly decision: 'block' | null
@@ -84,23 +80,23 @@ export const handleStopRequest = (
     async () => {
       const eventId = randomUUID()
 
-      // Resolve per-session IPC directory
+      // Resolve per-session IPC directory (for compat paths and kill/force_clear files)
       const sessionIpcDir = path.join(ipcBaseDir, sessionId)
       const eventsFile = path.join(sessionIpcDir, 'events.jsonl')
 
-      // Ensure IPC directory exists (may be missing after /afk-reset)
+      // Ensure IPC directory exists (for kill/force_clear signal files)
       await fs.mkdir(sessionIpcDir, { recursive: true })
 
-      // Write Stop event to IPC (include sessionId for daemon cross-validation)
+      // Write Stop event to SQLite
       const event = stopEvent(eventId, slotNum, lastMessage, sessionId)
-      console.error(`[stop-hook] Writing Stop event ${eventId.slice(0,8)} to ${eventsFile}`)
+      console.error(`[stop-hook] Writing Stop event ${eventId.slice(0,8)} to SQLite`)
       const writeResult = await writeEvent(eventsFile, event)()
       if (E.isLeft(writeResult)) {
         throw hookError(`Failed to write stop event: ${String(writeResult.left)}`)
       }
 
       // Enter polling loop
-      console.error(`[stop-hook] Entering polling loop for response-${eventId.slice(0,8)}.json in ${sessionIpcDir}`)
+      console.error(`[stop-hook] Entering polling loop for response to ${eventId.slice(0,8)}`)
       return await pollForInstruction(sessionIpcDir, eventId, slotNum, eventsFile, configDir, sessionId)
     },
     (error: unknown): HookError => {
@@ -119,10 +115,8 @@ export const handleStopRequest = (
 // ============================================================================
 
 /**
- * Attempt to recover a dead daemon by restarting it (via shared helper)
+ * Attempt to recover a dead daemon by restarting it
  * and re-sending the Stop event.
- *
- * @returns true if recovery succeeded, false if it failed
  */
 const attemptDaemonRecovery = async (
   configDir: string,
@@ -184,22 +178,13 @@ const pollForInstruction = async (
       return { decision: null, reason: 'force clear signal received' }
     }
 
-    // Check for response file
+    // Check SQLite for response
     const responseResult = await readResponse(ipcDir, eventId)()
     if (E.isRight(responseResult) && responseResult.right !== null) {
       const response = responseResult.right
       console.error(`[stop-hook] Got response for ${eventId.slice(0,8)}: "${String(response.instruction).slice(0,50)}"`)
-      // Clean up response file
-      const responseFile = path.join(ipcDir, `response-${eventId}.json`)
-      await fs.unlink(responseFile).catch(() => {})
-
-      // NOTE: Do NOT delete bound_session here. The binding must persist
-      // for the session's entire lifetime. Deleting it creates a race
-      // condition where another session's hook can rebind to this slot
-      // via findUnboundSession(), causing session hijacking.
 
       // Block stop and inject instruction via "reason" field
-      // (matches Claude Code Stop hook schema)
       return {
         decision: 'block',
         reason: response.instruction
@@ -225,17 +210,14 @@ const pollForInstruction = async (
           }
 
           recoveryAttempts++
-          // Extract lastMessage from the Stop event file for re-sending
           const recovered = await attemptDaemonRecovery(
             configDir, eventsFile, eventId, slotNum, '', recoveryAttempts
           )
 
           if (recovered) {
-            // Reset health check timer to give daemon time to start
             lastHealthCheck = Date.now()
           }
         } else {
-          // Daemon is healthy — reset recovery counter
           recoveryAttempts = 0
         }
       }

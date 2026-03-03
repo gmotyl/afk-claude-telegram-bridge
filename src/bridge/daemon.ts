@@ -21,8 +21,9 @@ import {
   StateError
 } from '../core/state'
 import { loadState, saveState } from '../services/state-persistence'
-import { readEventQueue, listEvents, deleteEventFile, writeResponse } from '../services/ipc'
+import { readAllUnprocessedEvents, markEventDone, writeResponse } from '../services/ipc-sqlite'
 import { readQueuedInstruction, deleteQueuedInstruction } from '../services/queued-instruction'
+import { openDatabase, closeDatabase } from '../services/db'
 import {
   createForumTopic,
   deleteForumTopic,
@@ -284,7 +285,8 @@ const getSessionIpcDir = (config: Config, state: State, slotNum: number): string
 }
 
 /**
- * Process all events from session IPC subdirectories
+ * Process all unprocessed events from SQLite events table.
+ * Replaces directory scanning — reads events directly from the database.
  */
 const processAllEvents = (
   config: Config,
@@ -295,95 +297,59 @@ const processAllEvents = (
     async () => {
       let currentState = state
 
-      // Scan all session subdirectories under ipcBaseDir
-      let entries: import('fs').Dirent[]
-      try {
-        entries = await fs.readdir(config.ipcBaseDir, { withFileTypes: true })
-      } catch {
+      // Read all unprocessed events from SQLite
+      const eventsResult = await readAllUnprocessedEvents()()
+      if (E.isLeft(eventsResult)) {
+        console.error('Error reading events from SQLite:', eventsResult.left)
         return state
       }
 
-      const sessionDirs = entries.filter((e) => e.isDirectory())
+      for (const { event, eventRowId } of eventsResult.right) {
+        // Save pre-event state for SessionEnd side effects
+        const preEventState = currentState
 
-      for (const dir of sessionDirs) {
-        const sessionDir = path.join(config.ipcBaseDir, dir.name)
-        const dirSessionId = dir.name  // IPC directory name IS the session UUID
-
-        const filesResult = await listEvents(sessionDir)()
-        if (E.isLeft(filesResult)) continue
-
-        const eventFiles = filesResult.right.filter((f) => f.endsWith('.jsonl'))
-
-        for (const filename of eventFiles) {
-          const filePath = path.join(sessionDir, filename)
-
-          const eventsResult = await readEventQueue(filePath)()
-          if (E.isRight(eventsResult)) {
-            for (const event of eventsResult.right) {
-              // Cross-validate: if event has sessionId, it must match the directory
-              if ('sessionId' in event && event.sessionId && event.sessionId !== dirSessionId) {
-                // SessionStart is special — its sessionId IS the AFK UUID, which matches dir
-                if (event._tag !== 'SessionStart') {
-                  console.error(`[daemon] SESSION MISMATCH: event.sessionId=${(event.sessionId as string).slice(0,8)} != dir=${dirSessionId.slice(0,8)}, dropping ${event._tag} event`)
-                  continue
-                }
-              }
-
-              // Save pre-event state for SessionEnd side effects
-              const preEventState = currentState
-
-              // Pure state update
-              const processResult = processEvent(config, currentState, event)
-              if (E.isRight(processResult)) {
-                currentState = processResult.right
-              } else {
-                // SlotAlreadyActive is benign (activate script pre-added slot)
-                // — still run side effects below
-                if (processResult.left._tag !== 'SlotAlreadyActive') {
-                  console.error('Error processing event:', processResult.left)
-                  continue
-                }
-              }
-
-              // Telegram side effects
-              if (event._tag === 'SessionEnd') {
-                // For SessionEnd, we need the slot from pre-removal state
-                const slot = preEventState.slots[event.slotNum]
-                if (slot?.threadId) {
-                  await sendMessageToTopic(
-                    config.telegramBotToken,
-                    String(config.telegramGroupId),
-                    `🔴 S${event.slotNum} deactivated — ${slot.projectName}`,
-                    slot.threadId
-                  )()
-
-                  // Delete forum topic
-                  await deleteForumTopic(
-                    config.telegramBotToken,
-                    String(config.telegramGroupId),
-                    slot.threadId
-                  )()
-
-                  // Write deactivation marker
-                  const markerPath = path.join(sessionDir, 'deactivation_processed')
-                  await fs.writeFile(markerPath, '', 'utf-8').catch(() => {})
-                }
-              } else {
-                currentState = await processEventSideEffects(
-                  config, currentState, event, runtime
-                )
-              }
-            }
-
-            // Delete the event file after processing
-            const deleteResult = await deleteEventFile(filePath)()
-            if (E.isLeft(deleteResult)) {
-              console.error('Error deleting event file:', deleteResult.left)
-            }
-          } else {
-            console.error('Error reading event file:', eventsResult.left)
+        // Pure state update
+        const processResult = processEvent(config, currentState, event)
+        if (E.isRight(processResult)) {
+          currentState = processResult.right
+        } else {
+          // SlotAlreadyActive is benign (activate script pre-added slot)
+          // — still run side effects below
+          if (processResult.left._tag !== 'SlotAlreadyActive') {
+            console.error('Error processing event:', processResult.left)
+            // Mark as processed even on error to avoid infinite retry
+            await markEventDone(eventRowId)()
+            continue
           }
         }
+
+        // Telegram side effects
+        if (event._tag === 'SessionEnd') {
+          // For SessionEnd, we need the slot from pre-removal state
+          const slot = preEventState.slots[event.slotNum]
+          if (slot?.threadId) {
+            await sendMessageToTopic(
+              config.telegramBotToken,
+              String(config.telegramGroupId),
+              `🔴 S${event.slotNum} deactivated — ${slot.projectName}`,
+              slot.threadId
+            )()
+
+            // Delete forum topic
+            await deleteForumTopic(
+              config.telegramBotToken,
+              String(config.telegramGroupId),
+              slot.threadId
+            )()
+          }
+        } else {
+          currentState = await processEventSideEffects(
+            config, currentState, event, runtime
+          )
+        }
+
+        // Mark event as processed in SQLite
+        await markEventDone(eventRowId)()
       }
 
       // Handle stop side effects (queued instruction auto-inject)
@@ -987,8 +953,16 @@ export const startDaemon = (configPath: string): TE.TaskEither<DaemonError, Stop
       }
       const config = configResult.right
 
-      // State file lives alongside config.json (not inside ipcBaseDir)
+      // Open SQLite database for IPC
       const configDir = path.dirname(configPath)
+      const dbPath = path.join(configDir, 'bridge.db')
+      const dbResult = openDatabase(dbPath)
+      if (E.isLeft(dbResult)) {
+        throw stateError(`Failed to open SQLite database: ${String(dbResult.left)}`)
+      }
+      console.log(`SQLite database opened at ${dbPath}`)
+
+      // State file lives alongside config.json (not inside ipcBaseDir)
       const stateFilePath = path.join(configDir, 'state.json')
       const stateResult = await loadState(stateFilePath)()
 
@@ -1077,6 +1051,9 @@ export const startDaemon = (configPath: string): TE.TaskEither<DaemonError, Stop
             if (E.isLeft(finalResult)) {
               throw finalResult
             }
+
+            // Close SQLite database
+            closeDatabase()
 
             console.log('Bridge Daemon stopped gracefully')
           },

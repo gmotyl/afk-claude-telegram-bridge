@@ -1,23 +1,22 @@
 /**
  * @module hook/permission
- * Permission request handling - hook writes to IPC, waits for daemon approval.
+ * Permission request handling - hook writes to SQLite, waits for daemon approval.
  *
  * Flow:
  * 1. Generate unique request ID
- * 2. Write permission request event to IPC events.jsonl
- * 3. Poll for response file (response-{requestId}.json)
+ * 2. Write permission request event to SQLite events table
+ * 3. Poll for response in SQLite responses table
  * 4. Parse response and validate
- * 5. Clean up response file
- * 6. Return PermissionResponse to Claude Code
+ * 5. Return PermissionResponse to Claude Code
  */
 
 import * as TE from 'fp-ts/TaskEither'
-import * as fs from 'fs/promises'
+import * as E from 'fp-ts/Either'
 import * as path from 'path'
 import { randomUUID } from 'crypto'
 import { type HookArgs } from './args'
 import { permissionRequest } from '../types/events'
-import { writeEvent } from '../services/ipc'
+import { writeEvent, readResponse } from '../services/ipc-sqlite'
 import { type HookError, hookError } from '../types/errors'
 
 // ============================================================================
@@ -43,11 +42,11 @@ const POLLING_INTERVAL_MS = 100
 /**
  * Request permission from daemon to execute a tool command.
  *
- * @param ipcBaseDir - Base IPC directory (e.g. ~/.claude/hooks/telegram-bridge/ipc/)
- * @param sessionId - Resolved AFK session UUID (IPC directory name)
+ * @param ipcBaseDir - Base IPC directory (used for path compat)
+ * @param sessionId - Resolved AFK session UUID
  * @param slotNum - Resolved slot number
  * @param hookArgs - Hook arguments containing tool and command
- * @param timeoutMs - Maximum milliseconds to wait for response (default: 30000)
+ * @param timeoutMs - Maximum milliseconds to wait for response (default: 350000)
  * @returns TaskEither<HookError, PermissionResponse>
  */
 export const requestPermission = (
@@ -67,32 +66,20 @@ export const requestPermission = (
       // Generate unique request ID
       const requestId = randomUUID()
 
-      // Resolve per-session IPC directory
+      // Build event path (for compat — SQLite ignores the path)
       const sessionIpcDir = path.join(ipcBaseDir, sessionId)
       const eventsFile = path.join(sessionIpcDir, 'events.jsonl')
 
       const commandDisplay = hookArgs.command || hookArgs.tool
       const event = permissionRequest(requestId, hookArgs.tool, commandDisplay, slotNum, sessionId)
 
-      // Ensure IPC directory exists (may be missing after /afk-reset)
-      await fs.mkdir(sessionIpcDir, { recursive: true })
-
       const writeResult = await writeEvent(eventsFile, event)()
-      if (!('right' in writeResult)) {
-        throw hookError(`Failed to write permission request to IPC: ${String((writeResult as any).left)}`)
+      if (E.isLeft(writeResult)) {
+        throw hookError(`Failed to write permission request to IPC: ${String(writeResult.left)}`)
       }
 
-      // Poll for response file
+      // Poll SQLite for response
       const response = await pollForResponse(sessionIpcDir, requestId, timeoutMs)
-
-      // Clean up response file
-      const responseFile = path.join(sessionIpcDir, `response-${requestId}.json`)
-      await fs
-        .unlink(responseFile)
-        .catch(() => {
-          // Ignore cleanup errors
-        })
-
       return response
     },
     (error: unknown): HookError => {
@@ -111,50 +98,39 @@ export const requestPermission = (
 // ============================================================================
 
 /**
- * Poll for response file until timeout.
+ * Poll SQLite responses table until timeout.
  */
 const pollForResponse = async (
   ipcDir: string,
   requestId: string,
   timeoutMs: number
 ): Promise<PermissionResponse> => {
-  const responseFile = path.join(ipcDir, `response-${requestId}.json`)
   const startTime = Date.now()
 
   while (true) {
     const elapsed = Date.now() - startTime
 
-    // Check if response file exists
-    try {
-      const content = await fs.readFile(responseFile, 'utf-8')
-      const response = JSON.parse(content) as PermissionResponse
+    // Check SQLite for response
+    const responseResult = await readResponse(ipcDir, requestId)()
+
+    if (E.isRight(responseResult) && responseResult.right !== null) {
+      // readResponse returns StopResponse ({ instruction }), but permission
+      // responses have { approved, reason? }. Parse from the raw payload.
+      const raw = responseResult.right as unknown as PermissionResponse
 
       // Validate response structure
-      if (typeof response.approved !== 'boolean') {
+      if (typeof raw.approved !== 'boolean') {
         throw hookError('Invalid response: missing or non-boolean "approved" field')
       }
 
-      return response
-    } catch (error) {
-      // If it's a HookError, re-throw
-      if (typeof error === 'object' && error !== null && '_tag' in error) {
-        const e = error as { _tag?: string }
-        if (e._tag === 'HookError') {
-          throw error
-        }
-      }
-
-      // File doesn't exist or JSON parse error
-      if (elapsed >= timeoutMs) {
-        throw hookError(`Permission request timeout after ${timeoutMs}ms`)
-      }
-
-      if (error instanceof SyntaxError) {
-        throw hookError(`Failed to parse permission response: ${error.message}`)
-      }
-
-      // Continue polling
-      await new Promise(resolve => setTimeout(resolve, POLLING_INTERVAL_MS))
+      return raw
     }
+
+    if (elapsed >= timeoutMs) {
+      throw hookError(`Permission request timeout after ${timeoutMs}ms`)
+    }
+
+    // Continue polling
+    await new Promise(resolve => setTimeout(resolve, POLLING_INTERVAL_MS))
   }
 }

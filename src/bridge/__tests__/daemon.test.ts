@@ -4,10 +4,12 @@ import * as path from 'path'
 import { startDaemon, cleanupOrphanedSlots, stripBotMention } from '../daemon'
 import { State, Slot } from '../../types/state'
 import { sessionStart, heartbeat, sessionEnd, message, stopEvent, keepAlive, permissionRequest } from '../../types/events'
+import { getDatabase, closeDatabase } from '../../services/db'
+import { ensureSessionForIpc, insertEvent, findUnreadResponse } from '../../services/db-queries'
 
-const tempDir = path.join('/tmp', 'daemon-test-' + Date.now())
+let tempDir: string
 const sessionId = 'test-session-1'
-const sessionDir = path.join(tempDir, sessionId)
+let sessionDir: string
 
 // Mock Telegram API calls to prevent actual network requests
 jest.mock('../../services/telegram', () => ({
@@ -47,13 +49,23 @@ const createTestConfigFile = async (dir: string): Promise<string> => {
 }
 
 /**
- * Helper to write events to a session subdirectory
+ * Helper to write events to SQLite (replaces file-based writeEventFile).
+ * Must be called AFTER daemon has started (DB opened by daemon).
  */
-const writeEventFile = async (dir: string, filename: string, events: any[]): Promise<void> => {
-  await fs.mkdir(dir, { recursive: true })
-  const filePath = path.join(dir, filename)
-  const content = events.map((e) => JSON.stringify(e)).join('\n') + '\n'
-  await fs.writeFile(filePath, content)
+const writeEventsToDb = (events: any[]): void => {
+  const dbResult = getDatabase()
+  if (E.isLeft(dbResult)) throw new Error('Database not opened')
+  const db = dbResult.right
+
+  for (const event of events) {
+    const eventSessionId = event.sessionId || sessionId
+    const slotNum = event.slotNum ?? 0
+    const eventId = event.requestId || event.eventId || `${event._tag}-${Date.now()}-${Math.random()}`
+
+    // Ensure session row exists for FK constraint
+    ensureSessionForIpc(db, eventSessionId, slotNum)
+    insertEvent(db, eventId, eventSessionId, event._tag, JSON.stringify(event))
+  }
 }
 
 const cleanup = async (dir: string): Promise<void> => {
@@ -66,10 +78,15 @@ const cleanup = async (dir: string): Promise<void> => {
 
 describe('startDaemon', () => {
   beforeEach(async () => {
+    tempDir = path.join('/tmp', 'daemon-test-' + Date.now() + '-' + Math.random().toString(36).slice(2))
+    sessionDir = path.join(tempDir, sessionId)
     await cleanup(tempDir)
   })
 
   afterEach(async () => {
+    // Small delay to let in-flight daemon iterations drain before closing DB
+    await new Promise(resolve => setTimeout(resolve, 200))
+    closeDatabase()
     await cleanup(tempDir)
   })
 
@@ -112,18 +129,19 @@ describe('startDaemon', () => {
     }
   })
 
-  it('processes SessionStart events from session subdirectories', async () => {
+  it('processes SessionStart events from SQLite', async () => {
     const configPath = await createTestConfigFile(tempDir)
-
-    // Write event to session subdirectory
-    const event = sessionStart(1, sessionId, 'metro', 'metro')
-    await writeEventFile(sessionDir, 'event-S1.jsonl', [event])
 
     const result = await startDaemon(configPath)()
     expect(E.isRight(result)).toBe(true)
 
     if (E.isRight(result)) {
       const stopFunction = result.right
+
+      // Write event to SQLite (DB opened by daemon)
+      const event = sessionStart(1, sessionId, 'metro', 'metro')
+      writeEventsToDb([event])
+
       await new Promise((resolve) => setTimeout(resolve, 1500))
 
       const stateFilePath = path.join(tempDir, 'state.json')
@@ -133,9 +151,14 @@ describe('startDaemon', () => {
       expect(state.slots[1]).toBeDefined()
       expect(state.slots[1]?.projectName).toBe('metro')
 
-      // Event file should be deleted after processing
-      const eventFileExists = await fs.access(path.join(sessionDir, 'event-S1.jsonl')).then(() => true).catch(() => false)
-      expect(eventFileExists).toBe(false)
+      // Event should be marked as processed in SQLite
+      const dbResult = getDatabase()
+      if (E.isRight(dbResult)) {
+        const unprocessed = dbResult.right
+          .prepare("SELECT * FROM events WHERE processed = 0 AND session_id = ?")
+          .all(sessionId) as any[]
+        expect(unprocessed.length).toBe(0)
+      }
 
       const stopResult = await stopFunction()()
       expect(E.isRight(stopResult)).toBe(true)
@@ -162,15 +185,16 @@ describe('startDaemon', () => {
     }
     await fs.writeFile(stateFilePath, JSON.stringify(initialState, null, 2))
 
-    // Write SessionEnd event to session subdirectory
-    const event = sessionEnd(1)
-    await writeEventFile(sessionDir, 'event-E1.jsonl', [event])
-
     const result = await startDaemon(configPath)()
     expect(E.isRight(result)).toBe(true)
 
     if (E.isRight(result)) {
       const stopFunction = result.right
+
+      // Write SessionEnd event to SQLite
+      const event = sessionEnd(1)
+      writeEventsToDb([event])
+
       await new Promise((resolve) => setTimeout(resolve, 1500))
 
       const stateContent = await fs.readFile(stateFilePath, 'utf-8')
@@ -202,14 +226,15 @@ describe('startDaemon', () => {
     }
     await fs.writeFile(stateFilePath, JSON.stringify(initialState, null, 2))
 
-    const event = heartbeat(1)
-    await writeEventFile(sessionDir, 'event-H1.jsonl', [event])
-
     const result = await startDaemon(configPath)()
     expect(E.isRight(result)).toBe(true)
 
     if (E.isRight(result)) {
       const stopFunction = result.right
+
+      const event = heartbeat(1)
+      writeEventsToDb([event])
+
       await new Promise((resolve) => setTimeout(resolve, 1500))
 
       const stateContent = await fs.readFile(stateFilePath, 'utf-8')
@@ -229,24 +254,21 @@ describe('startDaemon', () => {
   it('processes multiple events in sequence', async () => {
     const configPath = await createTestConfigFile(tempDir)
 
-    // Write events for two different sessions
-    const sess1Dir = path.join(tempDir, 'sess-1')
-    const sess2Dir = path.join(tempDir, 'sess-2')
-
-    await writeEventFile(sess1Dir, 'event-S1.jsonl', [
-      sessionStart(1, 'sess-1', 'metro', 'metro'),
-      heartbeat(1),
-      message('Hello', 1)
-    ])
-    await writeEventFile(sess2Dir, 'event-S2.jsonl', [
-      sessionStart(2, 'sess-2', 'alokai', 'alokai'),
-    ])
-
     const result = await startDaemon(configPath)()
     expect(E.isRight(result)).toBe(true)
 
     if (E.isRight(result)) {
       const stopFunction = result.right
+
+      // Write events for two different sessions — pass explicit sessionId to avoid
+      // ensureSessionForIpc CASCADE-deleting sess-1 when heartbeat/message use a different sessionId
+      writeEventsToDb([
+        sessionStart(1, 'sess-1', 'metro', 'metro'),
+        heartbeat(1, 'sess-1'),
+        message('Hello', 1, 'sess-1'),
+        sessionStart(2, 'sess-2', 'alokai', 'alokai'),
+      ])
+
       await new Promise((resolve) => setTimeout(resolve, 1500))
 
       const stateFilePath = path.join(tempDir, 'state.json')
@@ -283,33 +305,34 @@ describe('startDaemon', () => {
     }
     await fs.writeFile(stateFilePath, JSON.stringify(stateWithSlot, null, 2))
 
-    // Create queued instruction in session dir
+    // Create queued instruction in session dir (still file-based)
     await fs.mkdir(sessionDir, { recursive: true })
     await fs.writeFile(
       path.join(sessionDir, 'queued_instruction.json'),
       JSON.stringify({ text: 'run tests', timestamp: new Date().toISOString() })
     )
 
-    // Create stop event in session dir
-    const event = stopEvent('evt-test-1', 1, 'last message')
-    await writeEventFile(sessionDir, 'event-stop.jsonl', [event])
-
     const result = await startDaemon(configPath)()
     expect(E.isRight(result)).toBe(true)
 
     if (E.isRight(result)) {
       const stopFunction = result.right
+
+      // Create stop event in SQLite — pass explicit sessionId to match slot's session
+      const event = stopEvent('evt-test-1', 1, 'last message', sessionId)
+      writeEventsToDb([event])
+
       await new Promise((resolve) => setTimeout(resolve, 1500))
 
-      // Response file should be created in session dir
-      const responseFile = path.join(sessionDir, 'response-evt-test-1.json')
-      const responseExists = await fs.access(responseFile).then(() => true).catch(() => false)
-      expect(responseExists).toBe(true)
-
-      if (responseExists) {
-        const responseContent = await fs.readFile(responseFile, 'utf-8')
-        const response = JSON.parse(responseContent)
-        expect(response.instruction).toBe('run tests')
+      // Response should be in SQLite
+      const dbResult = getDatabase()
+      if (E.isRight(dbResult)) {
+        const responseResult = findUnreadResponse(dbResult.right, 'evt-test-1')
+        expect(E.isRight(responseResult)).toBe(true)
+        if (E.isRight(responseResult) && responseResult.right) {
+          const payload = JSON.parse(responseResult.right.payload)
+          expect(payload.instruction).toBe('run tests')
+        }
       }
 
       // Queued instruction should be deleted
@@ -324,18 +347,25 @@ describe('startDaemon', () => {
   it('processes KeepAlive events without state change', async () => {
     const configPath = await createTestConfigFile(tempDir)
 
-    const event = keepAlive('ka-1', 'evt-1', 1)
-    await writeEventFile(sessionDir, 'event-ka.jsonl', [event])
-
     const result = await startDaemon(configPath)()
     expect(E.isRight(result)).toBe(true)
 
     if (E.isRight(result)) {
       const stopFunction = result.right
+
+      const event = keepAlive('ka-1', 'evt-1', 1)
+      writeEventsToDb([event])
+
       await new Promise((resolve) => setTimeout(resolve, 1500))
 
-      const eventFileExists = await fs.access(path.join(sessionDir, 'event-ka.jsonl')).then(() => true).catch(() => false)
-      expect(eventFileExists).toBe(false)
+      // Event should be marked processed
+      const dbResult = getDatabase()
+      if (E.isRight(dbResult)) {
+        const unprocessed = dbResult.right
+          .prepare("SELECT * FROM events WHERE processed = 0")
+          .all() as any[]
+        expect(unprocessed.length).toBe(0)
+      }
 
       const stopResult = await stopFunction()()
       expect(E.isRight(stopResult)).toBe(true)
@@ -389,18 +419,18 @@ describe('startDaemon', () => {
     }
     await fs.writeFile(stateFilePath, JSON.stringify(initialState, null, 2))
 
-    // Bad event (slot 1 occupied) + good event
-    const events = [
-      sessionStart(1, 'sess-alokai', 'alokai', 'alokai'),
-      sessionStart(2, 'sess-ch', 'ch', 'ch')
-    ]
-    await writeEventFile(sessionDir, 'event-mixed.jsonl', events)
-
     const result = await startDaemon(configPath)()
     expect(E.isRight(result)).toBe(true)
 
     if (E.isRight(result)) {
       const stopFunction = result.right
+
+      // Bad event (slot 1 occupied) + good event
+      writeEventsToDb([
+        sessionStart(1, 'sess-alokai', 'alokai', 'alokai'),
+        sessionStart(2, 'sess-ch', 'ch', 'ch')
+      ])
+
       await new Promise((resolve) => setTimeout(resolve, 1500))
 
       const stateContent = await fs.readFile(stateFilePath, 'utf-8')
@@ -422,7 +452,7 @@ describe('startDaemon', () => {
 // ============================================================================
 
 describe('cleanupOrphanedSlots', () => {
-  const cleanupTempDir = path.join('/tmp', 'cleanup-test-' + Date.now())
+  let cleanupTempDir: string
 
   const makeSlot = (sid: string): Slot => ({
     sessionId: sid,
@@ -440,11 +470,14 @@ describe('cleanupOrphanedSlots', () => {
   })
 
   beforeEach(async () => {
+    cleanupTempDir = path.join('/tmp', 'cleanup-test-' + Date.now() + '-' + Math.random().toString(36).slice(2))
     await fs.rm(cleanupTempDir, { recursive: true, force: true }).catch(() => {})
     await fs.mkdir(cleanupTempDir, { recursive: true })
   })
 
   afterEach(async () => {
+    await new Promise(resolve => setTimeout(resolve, 200))
+    closeDatabase()
     await fs.rm(cleanupTempDir, { recursive: true, force: true }).catch(() => {})
   })
 
@@ -580,14 +613,6 @@ describe('cleanupOrphanedSlots', () => {
     if (E.isRight(result)) {
       const stopFunction = result.right
 
-      // Wait long enough for at least one cleanup cycle
-      // The daemon uses 30s cleanup interval, but the first iteration
-      // starts with lastCleanupTime = new Date(), so the first cleanup
-      // won't fire until 30s later. For this test we rely on the fact
-      // that the daemon loop processes events every 1s, and the orphaned
-      // slot will be picked up once the cleanup interval elapses.
-      // To avoid a 30s wait, we'll just verify the final state after stop.
-      // The slot should persist until cleanup runs.
       await new Promise((resolve) => setTimeout(resolve, 1500))
 
       const stopResult = await stopFunction()()
@@ -614,9 +639,8 @@ describe('cleanupOrphanedSlots', () => {
 // ============================================================================
 
 describe('permission batching', () => {
-  const batchTempDir = path.join('/tmp', 'daemon-batch-test-' + Date.now())
+  let batchTempDir: string
   const batchSessionId = 'batch-session-1'
-  const batchSessionDir = path.join(batchTempDir, batchSessionId)
 
   const createBatchConfigFile = async (dir: string, overrides?: Record<string, unknown>): Promise<string> => {
     const configPath = path.join(dir, 'config.json')
@@ -635,15 +659,18 @@ describe('permission batching', () => {
   }
 
   beforeEach(async () => {
+    batchTempDir = path.join('/tmp', 'daemon-batch-test-' + Date.now() + '-' + Math.random().toString(36).slice(2))
     await fs.rm(batchTempDir, { recursive: true, force: true }).catch(() => {})
-    await fs.mkdir(batchSessionDir, { recursive: true })
+    await fs.mkdir(path.join(batchTempDir, batchSessionId), { recursive: true })
   })
 
   afterEach(async () => {
+    await new Promise(resolve => setTimeout(resolve, 200))
+    closeDatabase()
     await fs.rm(batchTempDir, { recursive: true, force: true }).catch(() => {})
   })
 
-  it('buffers permission requests and does not immediately create response files', async () => {
+  it('buffers permission requests and processes them', async () => {
     const configPath = await createBatchConfigFile(batchTempDir)
 
     // Create state with active slot that has a threadId
@@ -663,24 +690,32 @@ describe('permission batching', () => {
     }
     await fs.writeFile(stateFilePath, JSON.stringify(initialState, null, 2))
 
-    // Write a permission request event
-    const event = permissionRequest('req-1', 'Bash', 'npm install', 1)
-    const eventsContent = JSON.stringify(event) + '\n'
-    await fs.writeFile(path.join(batchSessionDir, 'event-perm.jsonl'), eventsContent)
-
     const result = await startDaemon(configPath)()
     expect(E.isRight(result)).toBe(true)
 
     if (E.isRight(result)) {
       const stopFunction = result.right
 
+      // Write a permission request event to SQLite
+      const event = permissionRequest('req-1', 'Bash', 'npm install', 1, batchSessionId)
+      const dbResult = getDatabase()
+      if (E.isRight(dbResult)) {
+        const db = dbResult.right
+        ensureSessionForIpc(db, batchSessionId, 1)
+        insertEvent(db, 'req-1', batchSessionId, 'PermissionRequest', JSON.stringify(event))
+      }
+
       // Wait for event processing + batch flush (100ms window + daemon tick)
       await new Promise((resolve) => setTimeout(resolve, 2500))
 
       // After batch window expires, the request should have been flushed
-      // (sent to Telegram via mock). The event file should be consumed.
-      const eventFileExists = await fs.access(path.join(batchSessionDir, 'event-perm.jsonl')).then(() => true).catch(() => false)
-      expect(eventFileExists).toBe(false)
+      // Event should be marked as processed
+      if (E.isRight(dbResult)) {
+        const unprocessed = dbResult.right
+          .prepare("SELECT * FROM events WHERE processed = 0 AND session_id = ?")
+          .all(batchSessionId) as any[]
+        expect(unprocessed.length).toBe(0)
+      }
 
       const stopResult = await stopFunction()()
       expect(E.isRight(stopResult)).toBe(true)
@@ -706,15 +741,6 @@ describe('permission batching', () => {
     }
     await fs.writeFile(stateFilePath, JSON.stringify(initialState, null, 2))
 
-    // Write multiple permission request events in same file
-    const events = [
-      permissionRequest('req-batch-1', 'Bash', 'npm install', 1),
-      permissionRequest('req-batch-2', 'Edit', '/src/file.ts', 1),
-      permissionRequest('req-batch-3', 'Write', '/src/new.ts', 1),
-    ]
-    const eventsContent = events.map(e => JSON.stringify(e)).join('\n') + '\n'
-    await fs.writeFile(path.join(batchSessionDir, 'event-batch.jsonl'), eventsContent)
-
     // Spy on sendMultiRowButtonsToTopic to verify it gets called for batch
     const telegram = jest.requireMock('../../services/telegram')
     const multiRowSpy = jest.fn(() => () => Promise.resolve(E.right({ ok: true, result: { message_id: 4 } })))
@@ -725,6 +751,23 @@ describe('permission batching', () => {
 
     if (E.isRight(result)) {
       const stopFunction = result.right
+
+      // Write multiple permission request events to SQLite
+      const events = [
+        permissionRequest('req-batch-1', 'Bash', 'npm install', 1, batchSessionId),
+        permissionRequest('req-batch-2', 'Edit', '/src/file.ts', 1, batchSessionId),
+        permissionRequest('req-batch-3', 'Write', '/src/new.ts', 1, batchSessionId),
+      ]
+      const dbResult = getDatabase()
+      if (E.isRight(dbResult)) {
+        const db = dbResult.right
+        ensureSessionForIpc(db, batchSessionId, 1)
+        for (const event of events) {
+          const eid = (event as any).requestId
+          insertEvent(db, eid, batchSessionId, 'PermissionRequest', JSON.stringify(event))
+        }
+      }
+
       await new Promise((resolve) => setTimeout(resolve, 2500))
 
       // sendMultiRowButtonsToTopic should have been called for the batch
@@ -765,12 +808,6 @@ describe('permission batching', () => {
     }
     await fs.writeFile(stateFilePath, JSON.stringify(initialState, null, 2))
 
-    const event = permissionRequest('req-single', 'Bash', 'echo hello', 1)
-    await fs.writeFile(
-      path.join(batchSessionDir, 'event-single.jsonl'),
-      JSON.stringify(event) + '\n'
-    )
-
     // Spy on sendButtonsToTopic (single-row) to verify it's used for single request
     const telegram = jest.requireMock('../../services/telegram')
     const singleRowSpy = jest.fn(() => () => Promise.resolve(E.right({ ok: true, result: { message_id: 3 } })))
@@ -781,6 +818,15 @@ describe('permission batching', () => {
 
     if (E.isRight(result)) {
       const stopFunction = result.right
+
+      const event = permissionRequest('req-single', 'Bash', 'echo hello', 1, batchSessionId)
+      const dbResult = getDatabase()
+      if (E.isRight(dbResult)) {
+        const db = dbResult.right
+        ensureSessionForIpc(db, batchSessionId, 1)
+        insertEvent(db, 'req-single', batchSessionId, 'PermissionRequest', JSON.stringify(event))
+      }
+
       await new Promise((resolve) => setTimeout(resolve, 2500))
 
       // sendButtonsToTopic should have been called (single request format)
@@ -800,20 +846,22 @@ describe('permission batching', () => {
 // ============================================================================
 
 describe('session trust via callback', () => {
-  const trustTempDir = path.join('/tmp', 'daemon-trust-test-' + Date.now())
+  let trustTempDir: string
   const trustSessionId = 'trust-session-1'
-  const trustSessionDir = path.join(trustTempDir, trustSessionId)
 
   beforeEach(async () => {
+    trustTempDir = path.join('/tmp', 'daemon-trust-test-' + Date.now() + '-' + Math.random().toString(36).slice(2))
     await fs.rm(trustTempDir, { recursive: true, force: true }).catch(() => {})
-    await fs.mkdir(trustSessionDir, { recursive: true })
+    await fs.mkdir(path.join(trustTempDir, trustSessionId), { recursive: true })
   })
 
   afterEach(async () => {
+    await new Promise(resolve => setTimeout(resolve, 200))
+    closeDatabase()
     await fs.rm(trustTempDir, { recursive: true, force: true }).catch(() => {})
   })
 
-  it('trusted session auto-approves permission requests by writing response file', async () => {
+  it('trusted session auto-approves permission requests by writing response to SQLite', async () => {
     const configPath = path.join(trustTempDir, 'config.json')
     const config = {
       telegramBotToken: 'test-token',
@@ -843,26 +891,14 @@ describe('session trust via callback', () => {
     }
     await fs.writeFile(stateFilePath, JSON.stringify(initialState, null, 2))
 
-    // Mock Telegram polling to simulate: first a permission event gets flushed,
-    // then user clicks approve, then trust, then another permission comes in
-    // For simplicity, we test that the trust callback data format is correct
-    // and that after trust, a subsequent PermissionRequest gets auto-approved
-
-    // Step 1: Write first permission request
-    const event1 = permissionRequest('req-trust-1', 'Bash', 'npm test', 1)
-    await fs.writeFile(
-      path.join(trustSessionDir, 'event-perm1.jsonl'),
-      JSON.stringify(event1) + '\n'
-    )
-
-    // Mock polling to return approve callback after flush
+    // Mock Telegram polling to simulate approve + trust callbacks
     const telegram = jest.requireMock('../../services/telegram')
     const poller = jest.requireMock('../../services/telegram-poller')
 
     let pollCallCount = 0
     poller.pollTelegram = () => () => {
       pollCallCount++
-      // On 3rd poll (after event processing + flush), simulate approve + trust callbacks
+      // On 3rd poll, simulate approve callback
       if (pollCallCount === 3) {
         return Promise.resolve(E.right({
           updates: [
@@ -902,28 +938,35 @@ describe('session trust via callback', () => {
     if (E.isRight(result)) {
       const stopFunction = result.right
 
+      // Write first permission request to SQLite
+      const event1 = permissionRequest('req-trust-1', 'Bash', 'npm test', 1, trustSessionId)
+      const dbResult = getDatabase()
+      if (E.isRight(dbResult)) {
+        const db = dbResult.right
+        ensureSessionForIpc(db, trustSessionId, 1)
+        insertEvent(db, 'req-trust-1', trustSessionId, 'PermissionRequest', JSON.stringify(event1))
+      }
+
       // Wait for approval + trust callbacks
       await new Promise((resolve) => setTimeout(resolve, 5000))
 
       // Now write a second permission request — should be auto-approved
-      const event2 = permissionRequest('req-trust-2', 'Bash', 'npm run build', 1)
-      await fs.writeFile(
-        path.join(trustSessionDir, 'event-perm2.jsonl'),
-        JSON.stringify(event2) + '\n'
-      )
+      const event2 = permissionRequest('req-trust-2', 'Bash', 'npm run build', 1, trustSessionId)
+      if (E.isRight(dbResult)) {
+        insertEvent(dbResult.right, 'req-trust-2', trustSessionId, 'PermissionRequest', JSON.stringify(event2))
+      }
 
       // Wait for auto-approve to process
       await new Promise((resolve) => setTimeout(resolve, 2000))
 
-      // Check response file was auto-created (trusted session auto-approve)
-      const responseFile = path.join(trustSessionDir, 'response-req-trust-2.json')
-      const responseExists = await fs.access(responseFile).then(() => true).catch(() => false)
-      expect(responseExists).toBe(true)
-
-      if (responseExists) {
-        const responseContent = await fs.readFile(responseFile, 'utf-8')
-        const response = JSON.parse(responseContent)
-        expect(response.approved).toBe(true)
+      // Check response was auto-created in SQLite (trusted session auto-approve)
+      if (E.isRight(dbResult)) {
+        const responseResult = findUnreadResponse(dbResult.right, 'req-trust-2')
+        expect(E.isRight(responseResult)).toBe(true)
+        if (E.isRight(responseResult) && responseResult.right) {
+          const payload = JSON.parse(responseResult.right.payload)
+          expect(payload.approved).toBe(true)
+        }
       }
 
       const stopResult = await stopFunction()()

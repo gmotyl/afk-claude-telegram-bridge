@@ -15,6 +15,53 @@ jest.mock('../../services/daemon-health', () => ({
 }))
 
 import { runHook } from '../index'
+import { closeDatabase, getDatabase } from '../../services/db'
+import { insertResponse } from '../../services/db-queries'
+
+// ============================================================================
+// SQLite daemon simulation helpers
+// ============================================================================
+
+/** Get the last unprocessed event's ID and payload from SQLite */
+const getLastUnprocessedEvent = (): { id: string; payload: Record<string, unknown> } | null => {
+  const dbResult = getDatabase()
+  if (E.isLeft(dbResult)) return null
+
+  const events = dbResult.right
+    .prepare('SELECT * FROM events WHERE processed = 0 ORDER BY created_at DESC LIMIT 1')
+    .all() as Array<{ id: string; payload: string }>
+
+  if (events.length === 0) return null
+  return {
+    id: events[0]!.id,
+    payload: JSON.parse(events[0]!.payload) as Record<string, unknown>,
+  }
+}
+
+/** Count events for a session in SQLite */
+const countEventsForSession = (sessionId: string): number => {
+  const dbResult = getDatabase()
+  if (E.isLeft(dbResult)) return -1
+
+  const result = dbResult.right
+    .prepare('SELECT COUNT(*) as cnt FROM events WHERE session_id = ?')
+    .get(sessionId) as { cnt: number }
+
+  return result.cnt
+}
+
+/** Simulate daemon: wait, find event, write response to SQLite */
+const simulateDaemonResponse = (delayMs: number, responsePayload: Record<string, unknown>) =>
+  (async () => {
+    await new Promise(resolve => setTimeout(resolve, delayMs))
+    const event = getLastUnprocessedEvent()
+    if (event) {
+      const dbResult = getDatabase()
+      if (E.isRight(dbResult)) {
+        insertResponse(dbResult.right, `resp-${event.id}`, event.id, JSON.stringify(responsePayload))
+      }
+    }
+  })()
 
 /** Helper: create a test environment with config, state, and per-session IPC dir */
 const createTestEnv = async () => {
@@ -71,6 +118,7 @@ describe('Hook Main Entry Point', () => {
   })
 
   afterEach(async () => {
+    closeDatabase()
     try {
       await fs.rm(tempDir, { recursive: true, force: true })
     } catch {
@@ -81,7 +129,6 @@ describe('Hook Main Entry Point', () => {
   describe('runHook', () => {
     describe('permission_request hook', () => {
       it('processes permission_request and returns 0 when approved (decision via JSON stdout)', async () => {
-        // Use HookArgs with sessionId so binding resolves correctly
         const hookArgs = {
           type: 'permission_request' as const,
           tool: 'Bash',
@@ -89,24 +136,8 @@ describe('Hook Main Entry Point', () => {
           sessionId: 'claude-sess-A',
         }
 
-        // Simulate daemon response (write to per-session IPC dir)
-        const responsePromise = (async () => {
-          await new Promise(resolve => setTimeout(resolve, 100))
-
-          const eventsFile = path.join(sessionIpcDir, 'events.jsonl')
-          try {
-            const content = await fs.readFile(eventsFile, 'utf-8')
-            const lines = content.split('\n').filter(l => l.trim())
-            if (lines.length > 0) {
-              const lastLine = lines[lines.length - 1]
-              const event = JSON.parse(lastLine!) as { requestId?: string }
-              if (event.requestId) {
-                const responseFile = path.join(sessionIpcDir, `response-${event.requestId}.json`)
-                await fs.writeFile(responseFile, JSON.stringify({ approved: true }), 'utf-8')
-              }
-            }
-          } catch { /* ignore */ }
-        })()
+        // Simulate daemon response via SQLite
+        const responsePromise = simulateDaemonResponse(100, { approved: true })
 
         const result = await runHook(configPath, hookArgs)()
         await responsePromise
@@ -126,23 +157,7 @@ describe('Hook Main Entry Point', () => {
           sessionId: 'claude-sess-A',
         }
 
-        const responsePromise = (async () => {
-          await new Promise(resolve => setTimeout(resolve, 100))
-
-          const eventsFile = path.join(sessionIpcDir, 'events.jsonl')
-          try {
-            const content = await fs.readFile(eventsFile, 'utf-8')
-            const lines = content.split('\n').filter(l => l.trim())
-            if (lines.length > 0) {
-              const lastLine = lines[lines.length - 1]
-              const event = JSON.parse(lastLine!) as { requestId?: string }
-              if (event.requestId) {
-                const responseFile = path.join(sessionIpcDir, `response-${event.requestId}.json`)
-                await fs.writeFile(responseFile, JSON.stringify({ approved: false, reason: 'Dangerous' }), 'utf-8')
-              }
-            }
-          } catch { /* ignore */ }
-        })()
+        const responsePromise = simulateDaemonResponse(100, { approved: false, reason: 'Dangerous' })
 
         const result = await runHook(configPath, hookArgs)()
         await responsePromise
@@ -190,30 +205,14 @@ describe('Hook Main Entry Point', () => {
         }
       })
 
-      it('processes stop hook and returns 0 when response file appears', async () => {
+      it('processes stop hook and returns 0 when response appears in SQLite', async () => {
         const hookArgs = {
           type: 'stop' as const,
           sessionId: 'claude-sess-A',
           lastMessage: 'Task done',
         }
 
-        const responsePromise = (async () => {
-          await new Promise(resolve => setTimeout(resolve, 100))
-
-          const eventsFile = path.join(sessionIpcDir, 'events.jsonl')
-          try {
-            const content = await fs.readFile(eventsFile, 'utf-8')
-            const lines = content.split('\n').filter(l => l.trim())
-            const lastLine = lines[lines.length - 1]
-            if (lastLine) {
-              const event = JSON.parse(lastLine) as { eventId?: string; _tag?: string }
-              if (event._tag === 'Stop' && event.eventId) {
-                const responseFile = path.join(sessionIpcDir, `response-${event.eventId}.json`)
-                await fs.writeFile(responseFile, JSON.stringify({ instruction: 'test' }), 'utf-8')
-              }
-            }
-          } catch { /* ignore */ }
-        })()
+        const responsePromise = simulateDaemonResponse(100, { instruction: 'test' })
 
         const result = await runHook(configPath, hookArgs)()
         await responsePromise
@@ -412,26 +411,8 @@ describe('Hook Main Entry Point', () => {
           sessionId: 'claude-sess-B',
         }
 
-        // Simulate daemon response in session B's IPC dir
-        const responsePromise = (async () => {
-          await new Promise(resolve => setTimeout(resolve, 100))
-
-          const eventsFile = path.join(sessionIpcDirB, 'events.jsonl')
-          try {
-            const content = await fs.readFile(eventsFile, 'utf-8')
-            const lines = content.split('\n').filter(l => l.trim())
-            if (lines.length > 0) {
-              const event = JSON.parse(lines[lines.length - 1]!) as { requestId?: string }
-              if (event.requestId) {
-                await fs.writeFile(
-                  path.join(sessionIpcDirB, `response-${event.requestId}.json`),
-                  JSON.stringify({ approved: true }),
-                  'utf-8'
-                )
-              }
-            }
-          } catch { /* ignore */ }
-        })()
+        // Simulate daemon response via SQLite
+        const responsePromise = simulateDaemonResponse(100, { approved: true })
 
         const result = await runHook(configPath, hookArgs)()
         await responsePromise
@@ -441,12 +422,9 @@ describe('Hook Main Entry Point', () => {
           expect(result.right).toBe(0) // approved
         }
 
-        // Verify: events.jsonl was written to session B's dir, NOT session A's
-        const eventsA = path.join(sessionIpcDir, 'events.jsonl')
-        const eventsB = path.join(sessionIpcDirB, 'events.jsonl')
-        await expect(fs.readFile(eventsA, 'utf-8')).rejects.toThrow() // No events in A
-        const contentB = await fs.readFile(eventsB, 'utf-8')
-        expect(contentB.trim().length).toBeGreaterThan(0) // Events in B
+        // Verify: events were written to session B, NOT session A
+        expect(countEventsForSession(sessionId)).toBe(0)
+        expect(countEventsForSession(sessionIdB)).toBeGreaterThan(0)
       })
 
       it('falls back to single active slot when no session_id', async () => {
@@ -528,10 +506,8 @@ describe('Hook Main Entry Point', () => {
           expect(result.right).toBe(0)
         }
 
-        // Verify no events were written to IPC (no Telegram roundtrip)
-        const eventsFile = path.join(sessionIpcDir, 'events.jsonl')
-        const exists = await fs.access(eventsFile).then(() => true).catch(() => false)
-        expect(exists).toBe(false)
+        // Verify no events were written to SQLite (no Telegram roundtrip)
+        expect(countEventsForSession(sessionId)).toBe(0)
       })
 
       it('auto-approves Glob tool without Telegram roundtrip', async () => {
@@ -598,34 +574,15 @@ describe('Hook Main Entry Point', () => {
         }
 
         // Simulate daemon response so it doesn't hang
-        const responsePromise = (async () => {
-          await new Promise(resolve => setTimeout(resolve, 100))
-          const eventsFile = path.join(sessionIpcDir, 'events.jsonl')
-          try {
-            const content = await fs.readFile(eventsFile, 'utf-8')
-            const lines = content.split('\n').filter(l => l.trim())
-            if (lines.length > 0) {
-              const event = JSON.parse(lines[lines.length - 1]!) as { requestId?: string }
-              if (event.requestId) {
-                await fs.writeFile(
-                  path.join(sessionIpcDir, `response-${event.requestId}.json`),
-                  JSON.stringify({ approved: true }),
-                  'utf-8'
-                )
-              }
-            }
-          } catch { /* ignore */ }
-        })()
+        const responsePromise = simulateDaemonResponse(100, { approved: true })
 
         const result = await runHook(configPath, hookArgs)()
         await responsePromise
 
         expect(E.isRight(result)).toBe(true)
 
-        // Verify events WERE written to IPC (Telegram roundtrip happened)
-        const eventsFile = path.join(sessionIpcDir, 'events.jsonl')
-        const content = await fs.readFile(eventsFile, 'utf-8')
-        expect(content.trim().length).toBeGreaterThan(0)
+        // Verify events WERE written to SQLite (Telegram roundtrip happened)
+        expect(countEventsForSession(sessionId)).toBeGreaterThan(0)
       })
 
       it('still requires Telegram approval for Write', async () => {
@@ -695,9 +652,7 @@ describe('Hook Main Entry Point', () => {
         }
 
         // Verify no events were written (auto-approved, no Telegram roundtrip)
-        const eventsFile = path.join(sessionIpcDir, 'events.jsonl')
-        const exists = await fs.access(eventsFile).then(() => true).catch(() => false)
-        expect(exists).toBe(false)
+        expect(countEventsForSession(sessionId)).toBe(0)
       })
 
       it('auto-approves Write when whitelisted in autoApproveTools', async () => {
@@ -948,25 +903,7 @@ describe('Hook Main Entry Point', () => {
           sessionId: 'claude-sess-A',
         }
 
-        const responsePromise = (async () => {
-          await new Promise(resolve => setTimeout(resolve, 100))
-
-          const eventsFile = path.join(sessionIpcDir, 'events.jsonl')
-          try {
-            const content = await fs.readFile(eventsFile, 'utf-8')
-            const lines = content.split('\n').filter(l => l.trim())
-            if (lines.length > 0) {
-              const event = JSON.parse(lines[lines.length - 1]!) as { requestId?: string }
-              if (event.requestId) {
-                await fs.writeFile(
-                  path.join(sessionIpcDir, `response-${event.requestId}.json`),
-                  JSON.stringify({ approved: true }),
-                  'utf-8'
-                )
-              }
-            }
-          } catch { /* ignore */ }
-        })()
+        const responsePromise = simulateDaemonResponse(100, { approved: true })
 
         const result = await runHook(configPath, hookArgs)()
         await responsePromise

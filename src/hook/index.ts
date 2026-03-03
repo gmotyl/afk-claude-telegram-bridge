@@ -29,6 +29,7 @@ import { Config } from '../types/config'
 import { loadState } from '../services/state-persistence'
 import { findBoundSession, findUnboundSession, bindSession } from '../services/session-binding'
 import { ensureDaemonAlive } from '../services/daemon-health'
+import { openDatabase, closeDatabase } from '../services/db'
 import { type HookError, hookError } from '../types/errors'
 
 // ============================================================================
@@ -137,8 +138,16 @@ export const runHook = (
       }
       const config = configResult.right
 
-      // Step 3: Resolve session via binding
+      // Step 2b: Open SQLite database for IPC
       const configDir = path.dirname(configPath)
+      const dbPath = path.join(configDir, 'bridge.db')
+      const dbResult = openDatabase(dbPath)
+      if (E.isLeft(dbResult)) {
+        console.error(`[hook] Failed to open SQLite database: ${String(dbResult.left)}`)
+        // Fall through — hook can still work without SQLite (auto-approve)
+      }
+
+      // Step 3: Resolve session via binding
       const statePath = path.join(configDir, 'state.json')
 
       // Use session_id from hookArgs (stdin JSON) or env fallback

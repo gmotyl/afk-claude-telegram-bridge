@@ -38,6 +38,29 @@ export interface SessionRow {
 // Sessions
 // ============================================================================
 
+/**
+ * Ensure a session row exists for IPC FK constraints.
+ * If the session doesn't exist, clears any stale session on the same slot and inserts.
+ */
+export const ensureSessionForIpc = (
+  db: Database.Database,
+  sessionId: string,
+  slotNum: number
+): E.Either<DbError, void> =>
+  tryCatch(() => {
+    const existing = db.prepare('SELECT id FROM sessions WHERE id = ?').get(sessionId) as
+      | { id: string }
+      | undefined
+    if (existing) return
+
+    // Remove any stale session occupying this slot (CASCADE cleans events/responses)
+    db.prepare('DELETE FROM sessions WHERE slot_num = ?').run(slotNum)
+
+    db.prepare(
+      "INSERT INTO sessions (id, slot_num, activated_at) VALUES (?, ?, datetime('now'))"
+    ).run(sessionId, slotNum)
+  }, 'ensureSessionForIpc')
+
 export const insertSession = (
   db: Database.Database,
   id: string,
@@ -176,6 +199,17 @@ export const findUnprocessedEvents = (
         .prepare('SELECT * FROM events WHERE session_id = ? AND processed = 0 ORDER BY created_at')
         .all(sessionId) as EventRow[],
     'findUnprocessedEvents'
+  )
+
+export const findAllUnprocessedEvents = (
+  db: Database.Database
+): E.Either<DbError, readonly EventRow[]> =>
+  tryCatch(
+    () =>
+      db
+        .prepare('SELECT * FROM events WHERE processed = 0 ORDER BY created_at')
+        .all() as EventRow[],
+    'findAllUnprocessedEvents'
   )
 
 export const markEventProcessed = (
