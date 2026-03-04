@@ -7,7 +7,7 @@
 1. **Hook** - Runs as a Claude Code hook, intercepts tool calls and sends permission requests to Telegram
 2. **Daemon** - Long-running process that polls Telegram for responses and forwards them back to the hook
 
-The system uses file-based IPC for communication between hook and daemon, with Telegram as the user interface.
+The system uses **SQLite** (`bridge.db` via `better-sqlite3` in WAL mode) for IPC between hook and daemon, with Telegram as the user interface.
 
 ## Functional Areas
 
@@ -16,8 +16,8 @@ Claude Code hook implementation. Entry point for all hook events.
 
 - **index.ts** - Main hook orchestrator: parses args, resolves session, dispatches to handlers
 - **args.ts** - Parses CLI arguments and stdin JSON from Claude Code
-- **permission.ts** - Handles permission request events, sends to daemon via IPC
-- **stop.ts** - Handles stop events, polls daemon for instructions
+- **permission.ts** - Handles permission request events, sends to daemon via SQLite
+- **stop.ts** - Handles stop events, polls SQLite for instructions
 
 ### `src/bridge/`
 Telegram bridge daemon. Long-running process that manages Telegram communication.
@@ -30,14 +30,15 @@ Shared services used by both hook and daemon.
 
 | Service | Purpose |
 |---------|---------|
-| **ipc.ts** | File-based IPC: writeEventAtomic, readEventQueue, writeResponse |
+| **db.ts** | SQLite connection management: openDatabase, getDatabase, schema versioning |
+| **db-queries.ts** | Typed query helpers for all tables (sessions, events, responses, batches, etc.) |
+| **ipc-sqlite.ts** | SQLite-backed IPC: writeEvent, readResponse, readAllUnprocessedEvents |
 | **telegram.ts** | Telegram Bot API wrapper: sendMessage, answerCallbackQuery, etc. |
 | **telegram-poller.ts** | Long-polling for Telegram updates |
-| **state-persistence.ts** | Read/write persistent state.json |
-| **session-binding.ts** | Bind AFK sessions to IPC directories |
-| **daemon-health.ts** | Monitor daemon health, auto-restart if needed |
+| **state-persistence-sqlite.ts** | Reconstruct State from SQLite sessions + pending_stops tables |
+| **session-binding-sqlite.ts** | Bind Claude Code session_id to AFK sessions via SQLite |
+| **daemon-health.ts** | Monitor daemon health via daemon.pid + heartbeat, auto-restart if needed |
 | **daemon-launcher.ts** | Spawn daemon process |
-| **queued-instruction.ts** | Queue instructions for injection when Claude resumes |
 
 ### `src/core/`
 Core domain logic.
@@ -52,59 +53,82 @@ TypeScript type definitions and error types.
 - **state.ts** - State, Slot, PendingStop types
 - **events.ts** - IpcEvent, StopEvent types
 - **errors.ts** - Error constructors (HookError, BridgeError, etc.)
+- **db.ts** - Database error types (ConnectionError, QueryError, ConstraintError)
 
 ### `src/cli/`
 CLI entry points for activate/deactivate commands.
 
 ---
 
+## SQLite Schema
+
+`bridge.db` uses WAL journal mode with `busy_timeout = 5000` and `foreign_keys = ON`.
+
+| Table | Purpose |
+|-------|---------|
+| **sessions** | Active AFK sessions (slot_num, claude_session_id binding, thread_id, trust) |
+| **events** | IPC event queue (hook writes, daemon reads and marks processed) |
+| **responses** | IPC response queue (daemon writes, hook reads and marks read) |
+| **permission_batches** | Buffered permission requests for batched Telegram messages |
+| **permission_batch_items** | Links batch → individual events |
+| **pending_stops** | Stop events awaiting Telegram instruction delivery |
+| **known_topics** | Telegram forum topics created (for cleanup on reset) |
+
+---
+
 ## Key Execution Flows
 
-### 1. Permission Request Flow (RunHook → Telegram)
+### 1. Permission Request Flow (Hook → SQLite → Daemon → Telegram)
 
 ```
 runHook
   → parseHookArgs           # Parse CLI/stdin
   → loadConfig              # Load bot token, group ID
+  → openDatabase            # Open bridge.db
+  → resolveSession          # Find bound session via SQLite
   → ensureDaemonAlive       # Start daemon if needed
-  → resolveSession          # Find bound session or create new
   → handlePermissionRequest
-    → writeEventAtomic     # Write to event-{uuid}.jsonl (IPC)
-    → pollForResponse      # Wait for response-{uuid}.json
+    → writeEvent            # INSERT into events table
+    → pollForResponse       # SELECT from responses table (poll loop)
     → return permission decision to Claude Code
 ```
 
-### 2. Stop/Instruction Flow (Claude Stop → Telegram)
+### 2. Stop/Instruction Flow (Claude Stop → SQLite → Telegram)
 
 ```
 handleStop
   → handleStopRequest
-    → writeEventAtomic     # Write stop event to IPC
-    → pollForInstruction  # Poll for queued instructions
-      → readQueuedInstruction
-      → writeResponse     # Write response to daemon
+    → writeEvent            # INSERT Stop event into events table
+    → pollForInstruction    # SELECT from responses table (poll loop)
+      → check kill/force_clear signal files
+      → check daemon health periodically
+      → send KeepAlive events
+    → return instruction to Claude Code (blocks stop)
 ```
 
 ### 3. Daemon Telegram Poll Loop
 
 ```
 runDaemonIteration
-  → pollAndRouteUpdates
-    → pollTelegram        # Long-poll Telegram
-    → processIncomingMessage  # New messages → create slot
-    → handleCallbackQuery     # Button clicks → resolve permission/stop
+  → readAllUnprocessedEvents  # SELECT unprocessed events from SQLite
   → processEventSideEffects
-    → Permission batching
+    → Permission batching (INSERT into permission_batches)
     → Auto-approve for trusted sessions
+    → Stop → send Telegram message, INSERT into pending_stops
+  → pollAndRouteUpdates
+    → pollTelegram            # Long-poll Telegram
+    → processIncomingMessage  # Messages → writeResponse to SQLite
+    → handleCallbackQuery     # Button clicks → writeResponse to SQLite
 ```
 
 ### 4. Session Binding Flow
 
 ```
 resolveSession
-  → findBoundSession      # Check if session already bound
-  → findUnboundSession   # Find free slot if not
-  → bindSession          # Create binding in state
+  → loadState               # Reconstruct from SQLite sessions table
+  → findBoundSession        # SELECT WHERE claude_session_id = ?
+  → findUnboundSession      # SELECT WHERE claude_session_id IS NULL
+  → bindSession             # UPDATE sessions SET claude_session_id = ?
 ```
 
 ---
@@ -119,13 +143,8 @@ flowchart TB
 
     subgraph Bridge["Telegram Bridge"]
         Daemon[Daemon Process]
-        State[State.json]
-    end
-
-    subgraph IPC["IPC Layer (File-based)"]
-        Events[event-{uuid}.jsonl]
-        Responses[response-{uuid}.json]
-        Instructions[queued-instructions.json]
+        DB[(bridge.db<br/>SQLite WAL)]
+        PID[daemon.pid]
     end
 
     subgraph Telegram["Telegram"]
@@ -135,16 +154,18 @@ flowchart TB
     end
 
     Hook -->|1. Parse args| Hook
-    Hook -->|2. Ensure alive| Daemon
-    Hook -->|3. Write event| Events
-    Events -->|4. Read events| Daemon
-    Daemon -->|5. Poll updates| BotAPI
-    BotAPI -->|6. Updates| Daemon
-    Daemon -->|7. Write response| Responses
-    Responses -->|8. Read response| Hook
-    Daemon -->|9. Manage| State
-    Daemon -->|10. Messages| Topics
-    Topics -->|11. User input| BotAPI
+    Hook -->|2. Open DB| DB
+    Hook -->|3. Ensure alive| Daemon
+    Hook -->|4. INSERT event| DB
+    DB -->|5. SELECT events| Daemon
+    Daemon -->|6. Poll updates| BotAPI
+    BotAPI -->|7. Updates| Daemon
+    Daemon -->|8. INSERT response| DB
+    DB -->|9. SELECT response| Hook
+    Daemon -->|10. Read/write| DB
+    Daemon -->|11. Messages| Topics
+    Topics -->|12. User input| BotAPI
+    Daemon -->|13. Write PID| PID
 ```
 
 ### Data Flow Summary
@@ -152,20 +173,22 @@ flowchart TB
 | Step | Component | Action |
 |------|-----------|--------|
 | 1 | Hook | Claude Code triggers hook (PreToolUse, Stop, etc.) |
-| 2 | Hook | Parse arguments, load config |
-| 3 | Hook | Ensure daemon is running (start if not) |
-| 4 | Hook | Write event to unique file (eliminates race conditions) |
-| 5 | Daemon | Reads event files, processes permission/request |
-| 6 | Daemon | Polls Telegram for user responses |
-| 7 | Telegram | User approves/denies or sends instruction |
-| 8 | Daemon | Writes response to response-{uuid}.json |
-| 9 | Hook | Reads response, returns to Claude Code |
+| 2 | Hook | Parse arguments, load config, open SQLite |
+| 3 | Hook | Resolve session via SQLite binding |
+| 4 | Hook | Ensure daemon is running (start if not) |
+| 5 | Hook | INSERT event into events table |
+| 6 | Daemon | SELECT unprocessed events, process permission/stop |
+| 7 | Daemon | Polls Telegram for user responses |
+| 8 | Telegram | User approves/denies or sends instruction |
+| 9 | Daemon | INSERT response into responses table |
+| 10 | Hook | SELECT response, return to Claude Code |
 
 ### Key Design Decisions
 
-1. **File-based IPC** - Uses filesystem for hook↔daemon communication (simple, reliable)
-2. **Atomic event writes** - Each event written to unique file to prevent race conditions
+1. **SQLite IPC** - Uses `better-sqlite3` in WAL mode for atomic, concurrent hook↔daemon communication
+2. **Daemon PID file** - `daemon.pid` for daemon lifecycle management (not stored in SQLite)
 3. **Permission batching** - Multiple permissions buffered and sent as single Telegram message
 4. **Session trust** - After N approvals, session becomes "trusted" (auto-approve)
 5. **Forum topics** - Each slot gets its own Telegram forum topic for isolation
 6. **Slot-based multi-session** - Single daemon manages multiple concurrent Claude sessions
+7. **In-memory queued instructions** - Messages arriving before Stop events are held in daemon runtime memory (not persisted — if daemon restarts, the Stop event also disappears so there's nothing to deliver to)
