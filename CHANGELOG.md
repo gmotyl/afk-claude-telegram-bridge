@@ -33,8 +33,20 @@ Replace file-based IPC with SQLite for reliability and atomicity.
 - `better-sqlite3` import — changed from `import * as` (namespace) to default import to fix "is not a constructor" error in minified bundles
 - Session leak — other Claude sessions no longer get routed through AFK bridge when they don't match any bound session
 - Topic cleanup on reset — topics are now tracked in `known_topics` table and properly deleted
-- Dual daemon — activate now persists daemon PID to `state.json` so hooks don't spawn a second daemon
+- Dual daemon — activate now persists daemon PID to `daemon.pid` so hooks don't spawn a second daemon
 - Duplicate topics — caused by dual daemons both processing the same SessionStart event
+
+## [2.1.1] — Fix IPC Race Condition (2026-03-01)
+
+### Fixed
+
+- **IPC event race condition** — hook appended all events to a single `events.jsonl` file; daemon would read then delete the entire file, losing any events written between the read and delete. Now each event is written to a unique `event-{uuid}.jsonl` file, eliminating the race window. This fixes intermittent hangs where permission requests (especially Edit) were never forwarded to Telegram.
+- **Trust auto-approve silent failure** — `writeResponse()` result was not checked in the trusted session auto-approve path. If the write failed, the hook would hang forever with no error. Now falls through to normal batch flow on failure.
+
+### Changed
+
+- New `writeEventAtomic()` IPC function for race-safe per-event file writes; `writeEvent()` (append mode) preserved for backward compatibility
+- Hook callers (`permission.ts`, `stop.ts`) switched to `writeEventAtomic()` for all event writes including keep-alive and daemon recovery re-sends
 
 ## [2.1.0] — Permission Batching, Session Trust & Config Auto-approve (2026-03-01)
 

@@ -59,8 +59,11 @@ export const writeIpcSession = (ipcDir: string, sessionId: string, opts: {
   }
 
   if (opts.events) {
-    const lines = opts.events.map(e => JSON.stringify(e)).join('\n') + '\n'
-    fs.writeFileSync(path.join(sessionDir, 'events.jsonl'), lines)
+    // Write each event as a separate file (matching production behavior)
+    opts.events.forEach((e, i) => {
+      const line = JSON.stringify(e) + '\n'
+      fs.writeFileSync(path.join(sessionDir, `event-fixture-${i}.jsonl`), line)
+    })
   }
 
   return sessionDir

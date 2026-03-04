@@ -8,4 +8,13 @@ node_modules/
 coverage/
 # dist/ is committed (compiled output for npx distribution)
 .worktrees/
+
+# Runtime files (belong in ~/.claude/hooks/telegram-bridge/, not repo root)
+daemon.heartbeat
+daemon.pid
+daemon.log
+state.json
+bridge.db
+bridge.db-wal
+bridge.db-shm
 .gitnexus

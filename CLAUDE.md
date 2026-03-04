@@ -25,7 +25,7 @@ npx jest --testPathPattern="permission"
 ## Architecture
 
 ```
-Claude Code ←→ hook.sh ←→ hook.js ←→ IPC (filesystem) ←→ bridge.js daemon ←→ Telegram API
+Claude Code ←→ hook.sh ←→ hook.js ←→ SQLite (bridge.db) ←→ bridge.js daemon ←→ Telegram API
 ```
 
 **Three entry points** built by esbuild (`build.mjs`) into self-contained Node.js bundles with shebangs:
@@ -38,14 +38,14 @@ Claude Code ←→ hook.sh ←→ hook.js ←→ IPC (filesystem) ←→ bridge.
 
 **Layered architecture:**
 - `src/core/` — Pure business logic, no I/O. State transformations return `Either<Error, State>`.
-- `src/services/` — I/O operations (filesystem IPC, Telegram API, file locking, daemon lifecycle).
+- `src/services/` — I/O operations (SQLite IPC, Telegram API, daemon lifecycle).
 - `src/hook/`, `src/bridge/`, `src/cli/` — Orchestration layers that compose core + services.
 
-**IPC mechanism:** File-based JSONL event queue (`ipc/{sessionId}/events.jsonl`). Hook writes events, daemon reads them. Async responses via `response-{eventId}.json` files that hooks poll for.
+**IPC mechanism:** SQLite database (`bridge.db`) with WAL mode. Hook writes events to `events` table, daemon reads and marks processed. Responses via `responses` table that hooks poll.
 
-**Session isolation:** Multiple concurrent Claude sessions (up to 4 slots). Each session binds to an IPC directory via `bound_session` file on first hook event. All subsequent hooks route through that binding.
+**Session isolation:** Multiple concurrent Claude sessions (up to 4 slots). Each session binds via `claude_session_id` column in `sessions` table on first hook event. All subsequent hooks route through that binding.
 
-**Active listening loop (Stop hook):** When Claude finishes, the Stop hook enters a polling loop waiting for Telegram instructions. Daemon delivers instructions via response files. Loop continues until user clicks "Let it stop".
+**Active listening loop (Stop hook):** When Claude finishes, the Stop hook enters a polling loop waiting for Telegram instructions. Daemon delivers instructions via SQLite responses. Loop continues until user clicks "Let it stop".
 
 ## Key Patterns
 
@@ -53,7 +53,7 @@ Claude Code ←→ hook.sh ←→ hook.js ←→ IPC (filesystem) ←→ bridge.
 
 **Tagged discriminated unions:** Events (`src/types/events.ts`) and errors (`src/types/errors.ts`) use `_tag` field for exhaustive `switch` pattern matching. Smart constructors for all variants.
 
-**Immutable state:** All types use `readonly`. State updates via spread operator. State file protected by `proper-lockfile` for cross-process safety.
+**Immutable state:** All types use `readonly`. State updates via spread operator. SQLite handles cross-process concurrency via WAL mode.
 
 ## TypeScript Config
 
@@ -66,21 +66,19 @@ Tests live in `__tests__/` directories adjacent to source. Uses `ts-jest` preset
 ## Runtime Files
 
 Installed to `~/.claude/hooks/telegram-bridge/`:
-- `state.json` — Slot allocations and pending stops (lockfile-protected)
+- `bridge.db` — SQLite database (sessions, events, responses, pending_stops, known_topics)
 - `config.json` — Bot token, group ID, timeouts
-- `ipc/{sessionId}/` — Per-session event queues and response files
-- `daemon.log` / `hook-debug.log` — Debug logs
+- `daemon.pid` — Running daemon PID
+- `daemon.heartbeat` — Daemon heartbeat timestamp
+- `daemon.log` — Daemon debug logs
+- `ipc/{sessionId}/` — Signal files (kill, force_clear)
 
 <!-- gitnexus:start -->
 # GitNexus MCP
 
-This project is indexed by GitNexus as **afk-claude-telegram-bridge** (334 symbols, 949 relationships, 25 execution flows).
-
-GitNexus provides a knowledge graph over this codebase — call chains, blast radius, execution flows, and semantic search.
+This project is indexed by GitNexus as **afk-claude-telegram-bridge** (272 symbols, 700 relationships, 20 execution flows).
 
 ## Always Start Here
-
-For any task involving code understanding, debugging, impact analysis, or refactoring, you must:
 
 1. **Read `gitnexus://repo/{name}/context`** — codebase overview + check index freshness
 2. **Match your task to a skill below** and **read that skill file**
@@ -92,44 +90,11 @@ For any task involving code understanding, debugging, impact analysis, or refact
 
 | Task | Read this skill file |
 |------|---------------------|
-| Understand architecture / "How does X work?" | `.claude/skills/gitnexus/exploring/SKILL.md` |
-| Blast radius / "What breaks if I change X?" | `.claude/skills/gitnexus/impact-analysis/SKILL.md` |
-| Trace bugs / "Why is X failing?" | `.claude/skills/gitnexus/debugging/SKILL.md` |
-| Rename / extract / split / refactor | `.claude/skills/gitnexus/refactoring/SKILL.md` |
-
-## Tools Reference
-
-| Tool | What it gives you |
-|------|-------------------|
-| `query` | Process-grouped code intelligence — execution flows related to a concept |
-| `context` | 360-degree symbol view — categorized refs, processes it participates in |
-| `impact` | Symbol blast radius — what breaks at depth 1/2/3 with confidence |
-| `detect_changes` | Git-diff impact — what do your current changes affect |
-| `rename` | Multi-file coordinated rename with confidence-tagged edits |
-| `cypher` | Raw graph queries (read `gitnexus://repo/{name}/schema` first) |
-| `list_repos` | Discover indexed repos |
-
-## Resources Reference
-
-Lightweight reads (~100-500 tokens) for navigation:
-
-| Resource | Content |
-|----------|---------|
-| `gitnexus://repo/{name}/context` | Stats, staleness check |
-| `gitnexus://repo/{name}/clusters` | All functional areas with cohesion scores |
-| `gitnexus://repo/{name}/cluster/{clusterName}` | Area members |
-| `gitnexus://repo/{name}/processes` | All execution flows |
-| `gitnexus://repo/{name}/process/{processName}` | Step-by-step trace |
-| `gitnexus://repo/{name}/schema` | Graph schema for Cypher |
-
-## Graph Schema
-
-**Nodes:** File, Function, Class, Interface, Method, Community, Process
-**Edges (via CodeRelation.type):** CALLS, IMPORTS, EXTENDS, IMPLEMENTS, DEFINES, MEMBER_OF, STEP_IN_PROCESS
-
-```cypher
-MATCH (caller)-[:CodeRelation {type: 'CALLS'}]->(f:Function {name: "myFunc"})
-RETURN caller.name, caller.filePath
-```
+| Understand architecture / "How does X work?" | `.claude/skills/gitnexus/gitnexus-exploring/SKILL.md` |
+| Blast radius / "What breaks if I change X?" | `.claude/skills/gitnexus/gitnexus-impact-analysis/SKILL.md` |
+| Trace bugs / "Why is X failing?" | `.claude/skills/gitnexus/gitnexus-debugging/SKILL.md` |
+| Rename / extract / split / refactor | `.claude/skills/gitnexus/gitnexus-refactoring/SKILL.md` |
+| Tools, resources, schema reference | `.claude/skills/gitnexus/gitnexus-guide/SKILL.md` |
+| Index, status, clean, wiki CLI commands | `.claude/skills/gitnexus/gitnexus-cli/SKILL.md` |
 
 <!-- gitnexus:end -->
