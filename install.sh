@@ -8,6 +8,20 @@ INSTALL_DIR="$GLOBAL_BASE/hooks/telegram-bridge"
 SETTINGS="$GLOBAL_BASE/settings.json"
 REPO_BASE="https://raw.githubusercontent.com/gmotyl/afk-claude-telegram-bridge/main"
 
+# Check Node.js version (>= 22.5.0 required for node:sqlite)
+NODE_VERSION=$(node -v 2>/dev/null | sed 's/^v//')
+NODE_MAJOR=$(echo "$NODE_VERSION" | cut -d. -f1)
+NODE_MINOR=$(echo "$NODE_VERSION" | cut -d. -f2)
+if [ -z "$NODE_VERSION" ]; then
+  echo "ERROR: Node.js is required. Install Node.js >= 22.5.0" >&2
+  exit 1
+fi
+if [ "$NODE_MAJOR" -lt 22 ] || { [ "$NODE_MAJOR" -eq 22 ] && [ "$NODE_MINOR" -lt 5 ]; }; then
+  echo "ERROR: Node.js >= 22.5.0 required (found v${NODE_VERSION}). node:sqlite is not available in older versions." >&2
+  exit 1
+fi
+echo "Node.js v${NODE_VERSION} ✓"
+
 # --- Detect source (local clone or remote) ---
 SCRIPT_DIR=""
 if [ -n "${BASH_SOURCE[0]:-}" ] && [ "${BASH_SOURCE[0]}" != "bash" ]; then
@@ -63,24 +77,6 @@ fi
 chmod +x "$INSTALL_DIR/hook.js" "$INSTALL_DIR/bridge.js" "$INSTALL_DIR/cli.js" "$INSTALL_DIR/hook.sh"
 
 echo "Core files installed to $INSTALL_DIR"
-
-# --- Install native dependency (better-sqlite3 is externalized from bundle) ---
-if [ -n "$SCRIPT_DIR" ] && [ -d "$SCRIPT_DIR/node_modules/better-sqlite3" ]; then
-  # Local clone: symlink node_modules/better-sqlite3 for native addon
-  mkdir -p "$INSTALL_DIR/node_modules"
-  rm -rf "$INSTALL_DIR/node_modules/better-sqlite3" "$INSTALL_DIR/node_modules/bindings" "$INSTALL_DIR/node_modules/file-uri-to-path" "$INSTALL_DIR/node_modules/prebuild-install"
-  ln -sf "$SCRIPT_DIR/node_modules/better-sqlite3" "$INSTALL_DIR/node_modules/better-sqlite3"
-  # better-sqlite3 depends on bindings and file-uri-to-path at runtime
-  [ -d "$SCRIPT_DIR/node_modules/bindings" ] && ln -sf "$SCRIPT_DIR/node_modules/bindings" "$INSTALL_DIR/node_modules/bindings"
-  [ -d "$SCRIPT_DIR/node_modules/file-uri-to-path" ] && ln -sf "$SCRIPT_DIR/node_modules/file-uri-to-path" "$INSTALL_DIR/node_modules/file-uri-to-path"
-  echo "Linked better-sqlite3 native module"
-else
-  # Remote install: install better-sqlite3 directly in hook dir
-  echo "Installing better-sqlite3 native module..."
-  (cd "$INSTALL_DIR" && npm init -y > /dev/null 2>&1 && npm install better-sqlite3 --no-save > /dev/null 2>&1) || {
-    echo "WARNING: Failed to install better-sqlite3. Run: cd $INSTALL_DIR && npm install better-sqlite3" >&2
-  }
-fi
 
 # --- Install /afk and /back commands ---
 COMMANDS_DIR="$GLOBAL_BASE/commands"
