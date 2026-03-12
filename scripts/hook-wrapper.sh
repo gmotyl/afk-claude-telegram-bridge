@@ -22,39 +22,50 @@ chmod +x "$CONFIG_DIR/hook.js" 2>/dev/null || true
 export TELEGRAM_BRIDGE_CONFIG="$CONFIG_DIR"
 export AFK_CONFIG_PATH="$CONFIG_DIR/config.json"
 
-# Check if any AFK slots are active via SQLite bridge.db
+# Fast gate: marker file check (no node needed — pure bash)
 # hook.js resolves the exact session via session binding in the DB.
-# Use NODE_PATH so better-sqlite3 is found from the install directory's node_modules.
-if [ -f "$CONFIG_DIR/bridge.db" ] && command -v node &> /dev/null; then
-  _HAS_ACTIVE=$(NODE_PATH="$CONFIG_DIR/node_modules" node -e 'try { const D = require("better-sqlite3"); const db = new D(process.argv[1], { readonly: true }); const r = db.prepare("SELECT COUNT(*) as c FROM sessions").get(); if (r.c > 0) console.log("1"); db.close(); } catch(e) { process.stderr.write("[hook-wrapper] better-sqlite3 check failed: " + e.message + "\n"); }' "$CONFIG_DIR/bridge.db" 2>/dev/null)
-  if [ -n "$_HAS_ACTIVE" ]; then
-    export AFK_ACTIVE=1
+if [ -f "$CONFIG_DIR/active_count" ] && [ "$(cat "$CONFIG_DIR/active_count" 2>/dev/null)" -gt 0 ] 2>/dev/null; then
+  if [ -f "$CONFIG_DIR/daemon.pid" ]; then
+    _PID=$(cat "$CONFIG_DIR/daemon.pid" 2>/dev/null)
+    if [ -n "$_PID" ] && kill -0 "$_PID" 2>/dev/null; then
+      export AFK_ACTIVE=1
+    elif [ -f "$CONFIG_DIR/daemon.heartbeat" ]; then
+      _HB=$(cat "$CONFIG_DIR/daemon.heartbeat" 2>/dev/null)
+      _NOW=$(date +%s)
+      # Heartbeat is in epoch milliseconds; compare in seconds
+      if [ $((_NOW - ${_HB:-0} / 1000)) -lt 900 ]; then
+        export AFK_ACTIVE=1
+      else
+        echo "0" > "$CONFIG_DIR/active_count"  # Reset stale marker
+      fi
+    fi
+  else
+    export AFK_ACTIVE=1  # No PID file but marker says active — let hook.js decide
   fi
 fi
 
 # Handle special flags first (before stdin read)
 case "${1:-}" in
   --status)
-    # Show daemon status by reading bridge.db
+    # Show daemon status using marker file and node:sqlite
+    echo "AFK Bridge Status:"
+    _COUNT=$(cat "$CONFIG_DIR/active_count" 2>/dev/null || echo "0")
+    echo "Active sessions (marker): ${_COUNT}"
     if [ -f "$CONFIG_DIR/bridge.db" ] && command -v node &> /dev/null; then
-      echo "AFK Bridge Status:"
       echo "Database: $CONFIG_DIR/bridge.db"
-      _COUNT=$(NODE_PATH="$CONFIG_DIR/node_modules" node -e 'try { const D = require("better-sqlite3"); const db = new D(process.argv[1], { readonly: true }); const r = db.prepare("SELECT COUNT(*) as c FROM sessions").get(); console.log(r.c); db.close(); } catch(e) { console.log("0"); }' "$CONFIG_DIR/bridge.db" 2>/dev/null)
-      echo "Active sessions: ${_COUNT:-0}"
-      # Show daemon PID if alive
-      if [ -f "$CONFIG_DIR/daemon.pid" ]; then
-        _PID=$(cat "$CONFIG_DIR/daemon.pid" 2>/dev/null)
-        if [ -n "$_PID" ] && kill -0 "$_PID" 2>/dev/null; then
-          echo "Daemon PID: $_PID (alive)"
-        else
-          echo "Daemon PID: $_PID (dead)"
-        fi
+      _DB_COUNT=$(node -e 'try { const { DatabaseSync } = require("node:sqlite"); const db = new DatabaseSync(process.argv[1], { readOnly: true }); const r = db.prepare("SELECT COUNT(*) as c FROM sessions").get(); console.log(r.c); db.close(); } catch(e) { console.log("0"); }' "$CONFIG_DIR/bridge.db" 2>/dev/null)
+      echo "Active sessions (db): ${_DB_COUNT:-0}"
+    fi
+    # Show daemon PID if alive
+    if [ -f "$CONFIG_DIR/daemon.pid" ]; then
+      _PID=$(cat "$CONFIG_DIR/daemon.pid" 2>/dev/null)
+      if [ -n "$_PID" ] && kill -0 "$_PID" 2>/dev/null; then
+        echo "Daemon PID: $_PID (alive)"
       else
-        echo "Daemon: not running"
+        echo "Daemon PID: $_PID (dead)"
       fi
     else
-      echo "AFK Bridge not installed or no database. Run: bash install.sh"
-      exit 1
+      echo "Daemon: not running"
     fi
     exit 0
     ;;
@@ -79,7 +90,7 @@ case "${1:-}" in
       CHAT_ID=$(node -e 'try { const c = JSON.parse(require("fs").readFileSync(process.argv[1], "utf-8")); console.log(c.telegramGroupId || c.chat_id || ""); } catch(e) {}' "$CONFIG_DIR/config.json" 2>/dev/null)
       if [ -n "$BOT_TOKEN" ] && [ -n "$CHAT_ID" ]; then
         # Read thread IDs from both known_topics and sessions tables
-        THREAD_IDS=$(NODE_PATH="$CONFIG_DIR/node_modules" node -e 'try { const D = require("better-sqlite3"); const db = new D(process.argv[1], { readonly: true }); const rows = db.prepare("SELECT DISTINCT thread_id FROM known_topics WHERE deleted_at IS NULL UNION SELECT DISTINCT thread_id FROM sessions WHERE thread_id IS NOT NULL").all(); rows.forEach(r => console.log(r.thread_id)); db.close(); } catch(e) {}' "$CONFIG_DIR/bridge.db" 2>/dev/null)
+        THREAD_IDS=$(node -e 'try { const { DatabaseSync } = require("node:sqlite"); const db = new DatabaseSync(process.argv[1], { readOnly: true }); const rows = db.prepare("SELECT DISTINCT thread_id FROM known_topics WHERE deleted_at IS NULL UNION SELECT DISTINCT thread_id FROM sessions WHERE thread_id IS NOT NULL").all(); rows.forEach(r => console.log(r.thread_id)); db.close(); } catch(e) {}' "$CONFIG_DIR/bridge.db" 2>/dev/null)
         _DELETED=0
         for tid in $THREAD_IDS; do
           [ -z "$tid" ] && continue
@@ -102,6 +113,8 @@ case "${1:-}" in
       rm -f "$CONFIG_DIR/bridge.db" "$CONFIG_DIR/bridge.db-wal" "$CONFIG_DIR/bridge.db-shm"
       echo "Deleted bridge.db"
     fi
+    # Reset marker file
+    echo "0" > "$CONFIG_DIR/active_count" 2>/dev/null
     # Clean up PID file and legacy files
     rm -f "$CONFIG_DIR/daemon.pid" "$CONFIG_DIR/daemon.heartbeat" "$CONFIG_DIR/state.json" "$CONFIG_DIR/known_topics.jsonl" 2>/dev/null
     rm -rf "$CONFIG_DIR/ipc" 2>/dev/null
@@ -164,7 +177,5 @@ if [ ! -f "$CONFIG_DIR/bridge.db" ]; then
 fi
 
 # Pipe the saved stdin to hook.js
-# NODE_PATH ensures better-sqlite3 (external native module) is found
-export NODE_PATH="$CONFIG_DIR/node_modules"
 echo "$INPUT" | "$CONFIG_DIR/hook.js" "$@"
 exit $?
