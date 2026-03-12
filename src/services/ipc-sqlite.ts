@@ -36,7 +36,7 @@ const toIpcWriteError = (label: string) => (err: DbError): IpcError =>
 
 const withDb = <T>(
   label: string,
-  fn: (db: import('better-sqlite3').Database) => E.Either<DbError, T>,
+  fn: (db: import('node:sqlite').DatabaseSync) => E.Either<DbError, T>,
   toError: (label: string) => (err: DbError) => IpcError
 ): TE.TaskEither<IpcError, T> =>
   TE.fromEither(

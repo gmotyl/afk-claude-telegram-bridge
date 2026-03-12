@@ -1,5 +1,5 @@
 import * as E from 'fp-ts/Either'
-import Database from 'better-sqlite3'
+import { DatabaseSync } from 'node:sqlite'
 import {
   insertSession,
   findSessionBySlot,
@@ -95,23 +95,22 @@ CREATE TABLE known_topics (
 );
 `
 
-function createTestDb(): Database.Database {
-  const db = new Database(':memory:')
-  db.pragma('foreign_keys = ON')
+function createTestDb(): DatabaseSync {
+  const db = new DatabaseSync(':memory:', { enableForeignKeyConstraints: true })
   db.exec(SCHEMA_SQL)
   return db
 }
 
-function seedSession(db: Database.Database, id = 's1', slotNum = 1) {
+function seedSession(db: DatabaseSync, id = 's1', slotNum = 1) {
   insertSession(db, id, slotNum, 'test-project', '2024-01-01T00:00:00Z')
 }
 
-function seedEvent(db: Database.Database, id = 'e1', sessionId = 's1') {
+function seedEvent(db: DatabaseSync, id = 'e1', sessionId = 's1') {
   insertEvent(db, id, sessionId, 'permission_request', '{"tool":"Bash"}')
 }
 
 describe('db-queries', () => {
-  let db: Database.Database
+  let db: DatabaseSync
 
   beforeEach(() => {
     db = createTestDb()

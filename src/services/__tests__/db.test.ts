@@ -2,7 +2,7 @@ import * as E from 'fp-ts/Either'
 import * as path from 'path'
 import * as fs from 'fs'
 import * as os from 'os'
-import Database from 'better-sqlite3'
+import { DatabaseSync } from 'node:sqlite'
 import { openDatabase, closeDatabase, getDatabase, openMemoryDatabase } from '../db'
 
 describe('db', () => {
@@ -51,7 +51,7 @@ describe('db', () => {
       closeDatabase()
 
       // Insert a row before reopening
-      const raw = new Database(dbPath)
+      const raw = new DatabaseSync(dbPath)
       raw.exec(
         "INSERT INTO sessions (id, slot_num, activated_at) VALUES ('s1', 1, '2024-01-01')"
       )
@@ -73,7 +73,7 @@ describe('db', () => {
       expect(E.isRight(result)).toBe(true)
       if (!E.isRight(result)) return
 
-      const mode = result.right.pragma('journal_mode', { simple: true })
+      const mode = (result.right.prepare('PRAGMA journal_mode').get() as any)?.journal_mode
       expect(mode).toBe('wal')
     })
 
@@ -83,7 +83,7 @@ describe('db', () => {
       expect(E.isRight(result)).toBe(true)
       if (!E.isRight(result)) return
 
-      const timeout = result.right.pragma('busy_timeout', { simple: true })
+      const timeout = (result.right.prepare('PRAGMA busy_timeout').get() as any)?.timeout
       expect(timeout).toBe(5000)
     })
 
@@ -93,7 +93,7 @@ describe('db', () => {
       expect(E.isRight(result)).toBe(true)
       if (!E.isRight(result)) return
 
-      const fk = result.right.pragma('foreign_keys', { simple: true })
+      const fk = (result.right.prepare('PRAGMA foreign_keys').get() as any)?.foreign_keys
       expect(fk).toBe(1)
     })
 
@@ -103,7 +103,7 @@ describe('db', () => {
       expect(E.isRight(result)).toBe(true)
       if (!E.isRight(result)) return
 
-      const version = result.right.pragma('user_version', { simple: true })
+      const version = (result.right.prepare('PRAGMA user_version').get() as any)?.user_version
       expect(version).toBe(1)
     })
 
@@ -189,7 +189,7 @@ describe('db', () => {
       expect(E.isRight(result)).toBe(true)
       if (!E.isRight(result)) return
 
-      const fk = result.right.pragma('foreign_keys', { simple: true })
+      const fk = (result.right.prepare('PRAGMA foreign_keys').get() as any)?.foreign_keys
       expect(fk).toBe(1)
     })
   })

@@ -1,4 +1,4 @@
-import Database from 'better-sqlite3'
+import { DatabaseSync } from 'node:sqlite'
 import * as E from 'fp-ts/Either'
 import { DbError, queryError, constraintError } from '../types/db'
 
@@ -43,7 +43,7 @@ export interface SessionRow {
  * If the session doesn't exist, clears any stale session on the same slot and inserts.
  */
 export const ensureSessionForIpc = (
-  db: Database.Database,
+  db: DatabaseSync,
   sessionId: string,
   slotNum: number
 ): E.Either<DbError, void> =>
@@ -62,7 +62,7 @@ export const ensureSessionForIpc = (
   }, 'ensureSessionForIpc')
 
 export const insertSession = (
-  db: Database.Database,
+  db: DatabaseSync,
   id: string,
   slotNum: number,
   projectName: string | null,
@@ -75,7 +75,7 @@ export const insertSession = (
   }, 'insertSession')
 
 export const findSessionBySlot = (
-  db: Database.Database,
+  db: DatabaseSync,
   slotNum: number
 ): E.Either<DbError, SessionRow | undefined> =>
   tryCatch(
@@ -84,7 +84,7 @@ export const findSessionBySlot = (
   )
 
 export const findSessionByClaudeId = (
-  db: Database.Database,
+  db: DatabaseSync,
   claudeSessionId: string
 ): E.Either<DbError, SessionRow | undefined> =>
   tryCatch(
@@ -96,7 +96,7 @@ export const findSessionByClaudeId = (
   )
 
 export const updateSessionBinding = (
-  db: Database.Database,
+  db: DatabaseSync,
   sessionId: string,
   claudeSessionId: string
 ): E.Either<DbError, void> =>
@@ -108,7 +108,7 @@ export const updateSessionBinding = (
   }, 'updateSessionBinding')
 
 export const updateSessionHeartbeat = (
-  db: Database.Database,
+  db: DatabaseSync,
   sessionId: string,
   heartbeat: string
 ): E.Either<DbError, void> =>
@@ -117,7 +117,7 @@ export const updateSessionHeartbeat = (
   }, 'updateSessionHeartbeat')
 
 export const updateSessionTrust = (
-  db: Database.Database,
+  db: DatabaseSync,
   sessionId: string,
   trusted: boolean
 ): E.Either<DbError, void> =>
@@ -126,7 +126,7 @@ export const updateSessionTrust = (
   }, 'updateSessionTrust')
 
 export const incrementApprovalCount = (
-  db: Database.Database,
+  db: DatabaseSync,
   sessionId: string
 ): E.Either<DbError, number> =>
   tryCatch(() => {
@@ -137,7 +137,7 @@ export const incrementApprovalCount = (
   }, 'incrementApprovalCount')
 
 export const updateSessionThreadId = (
-  db: Database.Database,
+  db: DatabaseSync,
   sessionId: string,
   threadId: number
 ): E.Either<DbError, void> =>
@@ -146,7 +146,7 @@ export const updateSessionThreadId = (
   }, 'updateSessionThreadId')
 
 export const deleteSession = (
-  db: Database.Database,
+  db: DatabaseSync,
   sessionId: string
 ): E.Either<DbError, void> =>
   tryCatch(() => {
@@ -154,10 +154,10 @@ export const deleteSession = (
   }, 'deleteSession')
 
 export const listActiveSessions = (
-  db: Database.Database
+  db: DatabaseSync
 ): E.Either<DbError, readonly SessionRow[]> =>
   tryCatch(
-    () => db.prepare('SELECT * FROM sessions ORDER BY slot_num').all() as SessionRow[],
+    () => db.prepare('SELECT * FROM sessions ORDER BY slot_num').all() as unknown as SessionRow[],
     'listActiveSessions'
   )
 
@@ -176,7 +176,7 @@ export interface EventRow {
 }
 
 export const insertEvent = (
-  db: Database.Database,
+  db: DatabaseSync,
   id: string,
   sessionId: string,
   eventType: string,
@@ -189,30 +189,30 @@ export const insertEvent = (
   }, 'insertEvent')
 
 export const findUnprocessedEvents = (
-  db: Database.Database,
+  db: DatabaseSync,
   sessionId: string
 ): E.Either<DbError, readonly EventRow[]> =>
   tryCatch(
     () =>
       db
         .prepare('SELECT * FROM events WHERE session_id = ? AND processed = 0 ORDER BY created_at')
-        .all(sessionId) as EventRow[],
+        .all(sessionId) as unknown as EventRow[],
     'findUnprocessedEvents'
   )
 
 export const findAllUnprocessedEvents = (
-  db: Database.Database
+  db: DatabaseSync
 ): E.Either<DbError, readonly EventRow[]> =>
   tryCatch(
     () =>
       db
         .prepare('SELECT * FROM events WHERE processed = 0 ORDER BY created_at')
-        .all() as EventRow[],
+        .all() as unknown as EventRow[],
     'findAllUnprocessedEvents'
   )
 
 export const markEventProcessed = (
-  db: Database.Database,
+  db: DatabaseSync,
   eventId: string
 ): E.Either<DbError, void> =>
   tryCatch(() => {
@@ -222,7 +222,7 @@ export const markEventProcessed = (
   }, 'markEventProcessed')
 
 export const deleteSessionEvents = (
-  db: Database.Database,
+  db: DatabaseSync,
   sessionId: string
 ): E.Either<DbError, void> =>
   tryCatch(() => {
@@ -242,7 +242,7 @@ export interface ResponseRow {
 }
 
 export const insertResponse = (
-  db: Database.Database,
+  db: DatabaseSync,
   id: string,
   eventId: string,
   payload: string
@@ -254,7 +254,7 @@ export const insertResponse = (
   }, 'insertResponse')
 
 export const findUnreadResponse = (
-  db: Database.Database,
+  db: DatabaseSync,
   eventId: string
 ): E.Either<DbError, ResponseRow | undefined> =>
   tryCatch(
@@ -266,7 +266,7 @@ export const findUnreadResponse = (
   )
 
 export const markResponseRead = (
-  db: Database.Database,
+  db: DatabaseSync,
   responseId: string
 ): E.Either<DbError, void> =>
   tryCatch(() => {
@@ -293,7 +293,7 @@ export interface BatchItemRow {
 }
 
 export const insertBatch = (
-  db: Database.Database,
+  db: DatabaseSync,
   batchId: string,
   sessionId: string,
   slotNum: number
@@ -305,7 +305,7 @@ export const insertBatch = (
   }, 'insertBatch')
 
 export const addBatchItem = (
-  db: Database.Database,
+  db: DatabaseSync,
   batchId: string,
   eventId: string
 ): E.Either<DbError, void> =>
@@ -316,7 +316,7 @@ export const addBatchItem = (
   }, 'addBatchItem')
 
 export const findBufferingBatch = (
-  db: Database.Database,
+  db: DatabaseSync,
   slotNum: number
 ): E.Either<DbError, BatchRow | undefined> =>
   tryCatch(
@@ -328,7 +328,7 @@ export const findBufferingBatch = (
   )
 
 export const findFlushableBatches = (
-  db: Database.Database,
+  db: DatabaseSync,
   windowMs: number
 ): E.Either<DbError, readonly BatchRow[]> =>
   tryCatch(() => {
@@ -336,11 +336,11 @@ export const findFlushableBatches = (
       .prepare(
         "SELECT * FROM permission_batches WHERE status = 'buffering' AND created_at <= datetime('now', ?)"
       )
-      .all(`-${windowMs / 1000} seconds`) as BatchRow[]
+      .all(`-${windowMs / 1000} seconds`) as unknown as BatchRow[]
   }, 'findFlushableBatches')
 
 export const flushBatch = (
-  db: Database.Database,
+  db: DatabaseSync,
   batchId: string,
   telegramMessageId: number
 ): E.Either<DbError, void> =>
@@ -351,7 +351,7 @@ export const flushBatch = (
   }, 'flushBatch')
 
 export const resolveBatch = (
-  db: Database.Database,
+  db: DatabaseSync,
   batchId: string
 ): E.Either<DbError, readonly string[]> =>
   tryCatch(() => {
@@ -365,7 +365,7 @@ export const resolveBatch = (
   }, 'resolveBatch')
 
 export const findBatchById = (
-  db: Database.Database,
+  db: DatabaseSync,
   batchId: string
 ): E.Either<DbError, BatchRow | undefined> =>
   tryCatch(
@@ -377,12 +377,12 @@ export const findBatchById = (
   )
 
 export const findBatchItems = (
-  db: Database.Database,
+  db: DatabaseSync,
   batchId: string
 ): E.Either<DbError, readonly BatchItemRow[]> =>
   tryCatch(
     () =>
-      db.prepare('SELECT * FROM permission_batch_items WHERE batch_id = ?').all(batchId) as BatchItemRow[],
+      db.prepare('SELECT * FROM permission_batch_items WHERE batch_id = ?').all(batchId) as unknown as BatchItemRow[],
     'findBatchItems'
   )
 
@@ -399,7 +399,7 @@ export interface PendingStopRow {
 }
 
 export const insertPendingStop = (
-  db: Database.Database,
+  db: DatabaseSync,
   eventId: string,
   sessionId: string
 ): E.Either<DbError, void> =>
@@ -410,7 +410,7 @@ export const insertPendingStop = (
   }, 'insertPendingStop')
 
 export const findPendingStopBySession = (
-  db: Database.Database,
+  db: DatabaseSync,
   sessionId: string
 ): E.Either<DbError, PendingStopRow | undefined> =>
   tryCatch(
@@ -422,7 +422,7 @@ export const findPendingStopBySession = (
   )
 
 export const updatePendingStopTelegramId = (
-  db: Database.Database,
+  db: DatabaseSync,
   eventId: string,
   telegramMessageId: number
 ): E.Either<DbError, void> =>
@@ -434,7 +434,7 @@ export const updatePendingStopTelegramId = (
   }, 'updatePendingStopTelegramId')
 
 export const updateQueuedInstruction = (
-  db: Database.Database,
+  db: DatabaseSync,
   eventId: string,
   instruction: string
 ): E.Either<DbError, void> =>
@@ -446,7 +446,7 @@ export const updateQueuedInstruction = (
   }, 'updateQueuedInstruction')
 
 export const deletePendingStop = (
-  db: Database.Database,
+  db: DatabaseSync,
   eventId: string
 ): E.Either<DbError, void> =>
   tryCatch(() => {
@@ -465,7 +465,7 @@ export interface KnownTopicRow {
 }
 
 export const insertKnownTopic = (
-  db: Database.Database,
+  db: DatabaseSync,
   threadId: number,
   topicName: string
 ): E.Either<DbError, void> =>
@@ -476,7 +476,7 @@ export const insertKnownTopic = (
   }, 'insertKnownTopic')
 
 export const markTopicDeleted = (
-  db: Database.Database,
+  db: DatabaseSync,
   threadId: number
 ): E.Either<DbError, void> =>
   tryCatch(() => {
@@ -486,10 +486,10 @@ export const markTopicDeleted = (
   }, 'markTopicDeleted')
 
 export const findActiveTopics = (
-  db: Database.Database
+  db: DatabaseSync
 ): E.Either<DbError, readonly KnownTopicRow[]> =>
   tryCatch(
     () =>
-      db.prepare('SELECT * FROM known_topics WHERE deleted_at IS NULL ORDER BY thread_id').all() as KnownTopicRow[],
+      db.prepare('SELECT * FROM known_topics WHERE deleted_at IS NULL ORDER BY thread_id').all() as unknown as KnownTopicRow[],
     'findActiveTopics'
   )

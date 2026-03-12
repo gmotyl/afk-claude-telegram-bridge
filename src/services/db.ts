@@ -1,4 +1,4 @@
-import Database from 'better-sqlite3'
+import { DatabaseSync } from 'node:sqlite'
 import * as E from 'fp-ts/Either'
 import { DbError, connectionError } from '../types/db'
 
@@ -75,23 +75,21 @@ CREATE INDEX IF NOT EXISTS idx_sessions_slot
   ON sessions(slot_num);
 `
 
-let db: Database.Database | null = null
+let db: DatabaseSync | null = null
 
-export const openDatabase = (dbPath: string): E.Either<DbError, Database.Database> => {
+export const openDatabase = (dbPath: string): E.Either<DbError, DatabaseSync> => {
   try {
     if (db) {
       db.close()
       db = null
     }
-    const instance = new Database(dbPath)
-    instance.pragma('journal_mode = WAL')
-    instance.pragma('busy_timeout = 5000')
-    instance.pragma('foreign_keys = ON')
+    const instance = new DatabaseSync(dbPath, { enableForeignKeyConstraints: true, timeout: 5000 })
+    instance.exec('PRAGMA journal_mode = WAL')
 
-    const version = instance.pragma('user_version', { simple: true }) as number
+    const version = (instance.prepare('PRAGMA user_version').get() as { user_version: number } | undefined)?.user_version ?? 0
     if (version < SCHEMA_VERSION) {
       instance.exec(SCHEMA_SQL)
-      instance.pragma(`user_version = ${SCHEMA_VERSION}`)
+      instance.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`)
     }
 
     db = instance
@@ -113,19 +111,18 @@ export const closeDatabase = (): E.Either<DbError, void> => {
   }
 }
 
-export const getDatabase = (): E.Either<DbError, Database.Database> =>
+export const getDatabase = (): E.Either<DbError, DatabaseSync> =>
   db ? E.right(db) : E.left(connectionError('Database not opened'))
 
-export const openMemoryDatabase = (): E.Either<DbError, Database.Database> => {
+export const openMemoryDatabase = (): E.Either<DbError, DatabaseSync> => {
   try {
     if (db) {
       db.close()
       db = null
     }
-    const instance = new Database(':memory:')
-    instance.pragma('foreign_keys = ON')
+    const instance = new DatabaseSync(':memory:', { enableForeignKeyConstraints: true })
     instance.exec(SCHEMA_SQL)
-    instance.pragma(`user_version = ${SCHEMA_VERSION}`)
+    instance.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`)
     db = instance
     return E.right(instance)
   } catch (err) {
