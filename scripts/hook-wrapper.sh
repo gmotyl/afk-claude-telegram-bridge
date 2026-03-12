@@ -32,8 +32,8 @@ if [ -f "$CONFIG_DIR/active_count" ] && [ "$(cat "$CONFIG_DIR/active_count" 2>/d
     elif [ -f "$CONFIG_DIR/daemon.heartbeat" ]; then
       _HB=$(cat "$CONFIG_DIR/daemon.heartbeat" 2>/dev/null)
       _NOW=$(date +%s)
-      # Heartbeat is in epoch milliseconds; compare in seconds
-      if [ $((_NOW - ${_HB:-0} / 1000)) -lt 900 ]; then
+      # Heartbeat is epoch milliseconds; convert to seconds and check staleness
+      if [ -n "$_HB" ] && [ "$_HB" -gt 0 ] 2>/dev/null && [ $((_NOW - (_HB / 1000))) -lt 900 ]; then
         export AFK_ACTIVE=1
       else
         echo "0" > "$CONFIG_DIR/active_count"  # Reset stale marker
