@@ -22,7 +22,7 @@ Installs a complete Telegram ↔ Claude Code bridge that allows you to:
 2. **Continue tasks** by sending new instructions when Claude finishes
 3. **Auto-approve** read-only tools (Read, Glob, Grep, WebSearch, WebFetch)
 4. **Multi-session support** — up to 4 concurrent sessions (S1-S4)
-5. **Minimal dependencies** — Node.js with fp-ts only
+5. **Zero native dependencies** — uses Node.js built-in `node:sqlite` for session state and IPC (no native addons to compile)
 
 ## Installation
 
@@ -112,9 +112,9 @@ After installation:
   hook.js        — Compiled hook entry point (Node.js)
   bridge.js      — Compiled Telegram daemon (Node.js)
   config.json    — Bot token, group ID, settings
-  state.json     — Runtime state
+  bridge.db      — SQLite database (sessions, events, state)
+  active_count   — Marker file for fast bash gate check
   daemon.log     — Daemon log
-  ipc/           — Per-session IPC
 
 ~/.claude/commands/
   afk.md         — /afk command
@@ -142,9 +142,19 @@ After installation:
 
 ## Dependencies
 
-- Node.js 18+
+- Node.js 22.5+ (required for built-in `node:sqlite`)
 - bash
 - Telegram bot token
+
+## How SQLite is Used
+
+The bridge uses SQLite (via Node.js built-in `node:sqlite`) as its persistence and IPC layer:
+
+- **Session management** — tracks active AFK sessions, slot assignments, and Claude Code session bindings
+- **Event queue** — daemon and hooks communicate through a shared events table (permission requests, stop events, instructions)
+- **Permission batching** — buffers rapid-fire tool approval requests into single Telegram messages
+- **Concurrent access** — WAL mode allows the daemon (writer) and hooks (readers) to operate simultaneously without conflicts
+- **Crash recovery** — daemon reconstructs state from the database on restart
 
 ## Changelog
 

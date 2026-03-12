@@ -24,7 +24,7 @@ Perfect for: working on the go, meetings, or just stepping away while keeping Cl
 - **Smart Routing** — Just type in the topic, no prefixes needed
 - **Auto-approve** read-only tools (Read, Glob, Grep, WebSearch, WebFetch)
 - **Multi-session** support (up to 4 concurrent sessions)
-- **Zero runtime dependencies** — single-file JS bundles (fp-ts bundled in)
+- **Zero runtime dependencies** — single-file JS bundles (fp-ts bundled in), SQLite via Node.js built-in `node:sqlite`
 
 ## Quick Install
 
@@ -47,7 +47,7 @@ The installer builds (if local), copies files, registers hooks, installs `/afk` 
 
 ## Requirements
 
-- Node.js 18+
+- Node.js 22.5+ (uses built-in `node:sqlite` for session state and IPC)
 - bash
 - Telegram Group (not private chat) with **Topics enabled**
 - Bot added to the group as **Administrator**
